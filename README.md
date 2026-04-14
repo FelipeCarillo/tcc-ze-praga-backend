@@ -167,6 +167,87 @@ Suporta filtros via query string: `?severity=alta&search=ferrugem&page=1&limit=2
 
 ## Instalação e execução
 
+Há dois modos de rodar o backend. Escolha conforme seu caso:
+
+| Modo | Quando usar | Pré-requisito |
+|---|---|---|
+| **Docker (recomendado para frontend)** | Quer só subir a API sem configurar nada | Docker Desktop |
+| **Manual com Supabase** | Desenvolvimento completo com Storage | Python 3.12 + uv + Supabase |
+
+---
+
+## Modo Docker (sem Supabase)
+
+Ideal para o time de frontend: sobe o banco PostgreSQL e a API automaticamente, sem precisar de conta no Supabase. O upload de imagens não funciona neste modo, mas todas as demais rotas (autenticação, diagnósticos, planos de ação, assinaturas, uso) estão disponíveis.
+
+### Pré-requisito: Docker Desktop
+
+- **Windows / Mac:** [docs.docker.com/get-docker](https://docs.docker.com/get-docker/)
+- **Linux (Ubuntu/Debian):**
+  ```bash
+  sudo apt update && sudo apt install -y docker.io docker-compose-plugin
+  sudo systemctl enable --now docker
+  sudo usermod -aG docker $USER   # logout e login para aplicar
+  ```
+
+### Windows
+
+```powershell
+git clone https://github.com/FelipeCarillo/tcc-ze-praga-backend.git
+cd tcc-ze-praga-backend
+copy .env.docker.example .env
+docker compose up --build
+```
+
+### Linux / Mac
+
+```bash
+git clone https://github.com/FelipeCarillo/tcc-ze-praga-backend.git
+cd tcc-ze-praga-backend
+cp .env.docker.example .env
+docker compose up --build
+```
+
+Na primeira execução o Docker vai:
+1. Construir a imagem do backend
+2. Subir o banco PostgreSQL
+3. Aplicar as migrations automaticamente
+4. Popular os dados iniciais (planos, action plans)
+5. Iniciar a API na porta `8000`
+
+Acesse:
+- **API:** `http://localhost:8000/api/v1`
+- **Docs (Swagger):** `http://localhost:8000/docs`
+
+Para parar: `Ctrl+C` — e para apagar os containers e volume do banco:
+
+```bash
+docker compose down -v
+```
+
+### Usando Supabase no Docker
+
+Para apontar para o Supabase em vez do banco local, edite o `.env` antes de subir:
+
+```dotenv
+# Troque pela connection string do Supabase
+DATABASE_URL=postgresql+asyncpg://postgres:[senha]@[host]:5432/postgres
+
+# Preencha com as chaves do Supabase
+SUPABASE_URL=https://seu-projeto.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=sua-service-role-key
+```
+
+Em seguida suba apenas o container da API (sem o banco local):
+
+```bash
+docker compose up --build api
+```
+
+---
+
+## Modo Manual (com Supabase)
+
 ### Pré-requisitos
 
 - Python 3.12+
@@ -184,7 +265,11 @@ uv sync
 ### 2. Configurar variáveis de ambiente
 
 ```bash
+# Linux / Mac
 cp .env.example .env
+
+# Windows
+copy .env.example .env
 ```
 
 Edite o `.env` com os valores do seu projeto Supabase:
@@ -211,7 +296,6 @@ ALLOWED_ORIGINS=http://localhost:3000
 ### 3. Aplicar migrations
 
 ```bash
-uv run alembic revision --autogenerate -m "initial"
 uv run alembic upgrade head
 ```
 
