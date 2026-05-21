@@ -6,11 +6,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Install dependencies first (cache layer)
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev
 
 # Copy application code
 COPY . .
+
+RUN adduser --system --no-create-home appuser
+USER appuser
 
 EXPOSE 8000
 
