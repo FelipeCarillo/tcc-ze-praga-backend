@@ -14,8 +14,19 @@ class Diagnosis(Base):
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    crop_id: Mapped[str] = mapped_column(
+        String, ForeignKey("crops.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     disease_name: Mapped[str] = mapped_column(String, nullable=False)
+    # Legacy slug-based identifier — preserved during multi-cultivo migration.
+    # New code should prefer ``disease_fk_id`` (FK -> diseases.id).
     disease_id: Mapped[str] = mapped_column(String, nullable=False)
+    disease_fk_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("diseases.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     scientific_name: Mapped[str | None] = mapped_column(String, nullable=True)
     confidence: Mapped[float] = mapped_column(Numeric(5, 3), nullable=False)
     severity: Mapped[str] = mapped_column(String, nullable=False)
