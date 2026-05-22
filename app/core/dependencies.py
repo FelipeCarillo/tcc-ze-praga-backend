@@ -86,6 +86,11 @@ def get_action_plan_service(repo=Depends(get_action_plan_repository)):  # type: 
     return ActionPlanService(repo)
 
 
+def get_inference_service():  # type: ignore[no-untyped-def]
+    from app.domains.inference.service import InferenceService
+    return InferenceService()
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 async def get_current_user(

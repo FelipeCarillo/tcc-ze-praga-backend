@@ -130,6 +130,14 @@ def test_get_action_plan_service():
     assert isinstance(result, ActionPlanService)
 
 
+def test_get_inference_service():
+    from app.core.dependencies import get_inference_service
+    from app.domains.inference.service import InferenceService
+
+    result = get_inference_service()
+    assert isinstance(result, InferenceService)
+
+
 # ── get_current_user — success path ──────────────────────────────────────────
 
 async def test_get_current_user_success():

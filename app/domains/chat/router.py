@@ -1,30 +1,22 @@
 import json
-import random
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel
 
 from app.core.dependencies import (
     get_diagnosis_service,
+    get_inference_service,
     get_usage_service,
     require_quota,
 )
 from app.domains.auth.dto import UserDTO
-from app.domains.diagnoses.schemas import DiagnosisResponse
+from app.domains.diagnoses.schemas import CreateDiagnosisRequest, DiagnosisResponse
 from app.domains.diagnoses.service import DiagnosisService
-from app.domains.inference.router import _generate_mock_result
-from app.domains.diagnoses.schemas import CreateDiagnosisRequest
+from app.domains.inference.service import InferenceService
 from app.domains.usage.service import UsageService
 from app.shared.enums import FeatureTypeEnum, ModelEnum
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
-
-_MODEL_NAMES = {
-    "resnet50": "ResNet-50",
-    "efficientnet": "EfficientNet-B4",
-    "vit": "ViT-B/16",
-    "ensemble": "Ensemble",
-}
 
 _KEYWORD_RESPONSES: dict[str, str] = {
     "ferrugem": (
@@ -111,6 +103,7 @@ async def send_message(
     current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.CHAT)),
     diagnosis_svc: DiagnosisService = Depends(get_diagnosis_service),
     usage_svc: UsageService = Depends(get_usage_service),
+    inference_svc: InferenceService = Depends(get_inference_service),
 ) -> ChatResponse:
     await usage_svc.record_usage(
         current_user.id,
@@ -119,33 +112,32 @@ async def send_message(
     )
 
     if image is not None:
-        result = _generate_mock_result(model, image.filename or "imagem.jpg")
-        disease = result["disease"]
-        model_label = _MODEL_NAMES.get(model, model)
+        result = inference_svc.predict(model, image.filename or "imagem.jpg")
+        model_label = inference_svc.get_model_label(model)
 
         body = CreateDiagnosisRequest(
-            disease_name=disease["name"],
-            disease_id=disease["id"],
-            scientific_name=disease["scientific_name"],
-            confidence=result["confidence"],
-            severity=disease["severity"],
-            description=disease["description"],
-            model_used=result["model_id"],
+            disease_name=result.disease_name,
+            disease_id=result.disease_id,
+            scientific_name=result.scientific_name,
+            confidence=result.confidence,
+            severity=result.severity,
+            description=result.description,
+            model_used=result.model_id,
             image_url=None,
-            image_name=result["image_name"],
-            top3=result["top3"],
+            image_name=result.image_name,
+            top3=result.top3,
         )
         saved = await diagnosis_svc.create(current_user.id, body)
 
         content = (
             f"Analisei a imagem utilizando o modelo **{model_label}** e detectei "
-            f"**{disease['name']}**"
-            + (f" (*{disease['scientific_name']}*)" if disease["scientific_name"] else "")
-            + f" com **{result['confidence'] * 100:.1f}%** de confiança. "
+            f"**{result.disease_name}**"
+            + (f" (*{result.scientific_name}*)" if result.scientific_name else "")
+            + f" com **{result.confidence * 100:.1f}%** de confiança. "
         )
-        if disease["id"] != "saudavel":
+        if result.disease_id != "saudavel":
             content += (
-                f"A severidade é classificada como **{disease['severity']}**. "
+                f"A severidade é classificada como **{result.severity}**. "
                 "Consulte o plano de ação para recomendações de controle."
             )
         else:
