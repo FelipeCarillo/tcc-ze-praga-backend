@@ -160,6 +160,56 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
     return InferenceService(diseases=diseases)
 
 
+async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
+    crop_id_or_slug: str,
+    crop_repo,
+    disease_repo,
+):
+    """Carrega InferenceService para um crop especifico (slug ou id).
+
+    Usado pelo factory do sub-grafo (TCC-042) — multi-cultivo runtime.
+    """
+    from app.domains.inference.service import InferenceService
+
+    crop = await crop_repo.get_by_slug(crop_id_or_slug)
+    if crop is None:
+        crop = await crop_repo.get_by_id(crop_id_or_slug)
+    if crop is None:
+        raise RuntimeError(
+            f"Crop '{crop_id_or_slug}' nao encontrada — verifique seed_crops."
+        )
+    diseases = await disease_repo.list_by_crop(crop.id)
+    return InferenceService(diseases=diseases)
+
+
+def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]
+    inference_svc=Depends(get_inference_service),
+    action_plan_svc=Depends(get_action_plan_service),
+    diagnosis_svc=Depends(get_diagnosis_service),
+):
+    """Factory cacheada (por request) de ``CompiledStateGraph`` do diagnosis_graph.
+
+    Em Sprint A2 o ``inference_svc`` ja vem com catalogo da soja (default
+    do ``get_inference_service``). Multi-cultivo verdadeiro entra quando
+    o factory carregar diseases dinamicamente por ``crop_id`` — por ora o
+    closure ignora ``crop_id`` recebido e usa o svc injetado.
+    """
+    from app.domains.diagnosis_graph.graph import build_diagnosis_graph
+
+    _cache: dict[str, object] = {}
+
+    def _factory(crop_id: str):  # type: ignore[no-untyped-def]
+        if crop_id in _cache:
+            return _cache[crop_id]
+        graph = build_diagnosis_graph(
+            inference_svc, action_plan_svc, diagnosis_svc
+        )
+        _cache[crop_id] = graph
+        return graph
+
+    return _factory
+
+
 def get_chat_service(  # type: ignore[no-untyped-def]
     session_repo=Depends(get_chat_session_repository),
     message_repo=Depends(get_chat_message_repository),
