@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
 
+    # OpenAI
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.4-mini"
+
     # App
     app_env: str = "development"
     allowed_origins: str = "http://localhost:3000"
