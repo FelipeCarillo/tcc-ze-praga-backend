@@ -156,7 +156,7 @@ async def send_message(
     try:
         parsed = json.loads(messages)
         last_content = parsed[-1].get("content", "") if parsed else ""
-    except (json.JSONDecodeError, (KeyError, IndexError, TypeError)):
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
         last_content = messages
 
     return ChatResponse(role="assistant", content=_get_text_response(last_content))
