@@ -1,20 +1,19 @@
-"""LangGraph agent para o Zé Praga — orquestra LLM + 3 tools de domínio.
+"""LangGraph agent para o Zé Praga — orquestra LLM + tools (Sprint A2).
 
-O grafo é construído via factory (`build_graph`) que recebe os services
-necessários por closure. Isso desacopla o agente do FastAPI Depends (grafo
-roda fora do request lifecycle) e facilita injeção de mocks em testes.
+A partir de TCC-041 as tools moram em ``app/domains/chat/tools/`` e sao
+construidas via factories injetadas. Para retro-compat, o ``_build_tools``
+legacy continua disponivel (consumido pelo ``ChatService`` atual e pelos
+testes do PR #2), agora delegando para as factories novas com adapters.
+
+O grafo aceita ``tools: list[BaseTool] | None``:
+    - se passado, usa direto;
+    - senao, monta a lista legacy via ``_build_tools(inference_svc, action_plan_svc)``.
 
 Estado:
-    - messages: histórico de mensagens (auto-merged via add_messages)
-    - current_user_id: dono da sessão (futuramente pra auditoria/tools)
-    - image_filename: filename de imagem enviada no turno corrente
-    - model_id: modelo de inferência selecionado pelo usuário
-    - last_diagnosis_id: id do último diagnóstico criado neste turno
-
-Tools:
-    - analyze_image: roda inferência CNN/ViT na imagem
-    - get_action_plan: busca plano de ação por disease_id
-    - get_disease_info: lookup do catálogo interno de doenças
+    O ``ChatState`` legacy (com ``image_filename`` / ``last_diagnosis_id`` /
+    ``model_id``) permanece neste modulo pra back-compat. O novo
+    ``ChatState`` expandido (Sprint A2) mora em ``agent_state.py`` e sera
+    consumido pelas tools novas quando o ``ChatService`` for migrado.
 """
 
 import json
@@ -22,7 +21,7 @@ from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, SystemMessage
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -47,7 +46,10 @@ SYSTEM_PROMPT = (
 
 
 class ChatState(TypedDict):
-    """Estado do grafo. `messages` é mergeado automaticamente via add_messages."""
+    """Estado legacy do grafo (mantido pra back-compat). `messages` mergeado via add_messages.
+
+    O ChatState expandido (Sprint A2) mora em ``app/domains/chat/agent_state.py``.
+    """
 
     messages: Annotated[list[BaseMessage], add_messages]
     current_user_id: str
@@ -60,7 +62,13 @@ def _build_tools(
     inference_svc: "InferenceService",
     action_plan_svc: "ActionPlanService",
 ) -> list[Any]:
-    """Cria as 3 tools fechando sobre os services injetados."""
+    """Cria as 3 tools legacy fechando sobre os services injetados.
+
+    Mantido pra back-compat — o ``ChatService`` atual ainda chama
+    ``build_graph(inference_svc, action_plan_svc, ...)``. Quando o service
+    for migrado pra montar tools via ``build_tools(factories)`` do
+    ``tool_registry``, este helper pode ser removido.
+    """
 
     @tool
     def analyze_image(image_filename: str, model_id: str) -> str:
@@ -160,24 +168,42 @@ def _make_llm_node(llm_with_tools):  # type: ignore[no-untyped-def]
 
 
 def build_graph(
-    inference_svc: "InferenceService",
-    action_plan_svc: "ActionPlanService",
+    inference_svc: "InferenceService | None" = None,
+    action_plan_svc: "ActionPlanService | None" = None,
     llm: BaseChatModel | None = None,
     checkpointer=None,  # type: ignore[no-untyped-def]
+    tools: list[BaseTool] | None = None,
+    state_schema: type | None = None,
 ) -> "CompiledStateGraph":
     """Monta e compila o grafo do Zé Praga.
 
+    Modo legado (TCC-009): passa ``inference_svc`` + ``action_plan_svc`` e o
+    helper monta as 3 tools (analyze_image, get_disease_info, get_action_plan).
+
+    Modo novo (TCC-041): passa ``tools`` pre-construidas via factories. Quando
+    ``tools`` eh dado, ``inference_svc``/``action_plan_svc`` viram opcionais.
+
     Args:
-        inference_svc: serviço de inferência (mock CNN/ViT).
-        action_plan_svc: serviço de planos de ação.
+        inference_svc: serviço de inferência (mock CNN/ViT). Usado so quando
+            ``tools`` eh None.
+        action_plan_svc: serviço de planos de ação. Usado so quando ``tools``
+            eh None.
         llm: chat model opcional (default: ChatOpenAI da config). Útil pra
             injetar FakeLLM nos testes.
         checkpointer: checkpointer opcional do langgraph (ex: MemorySaver).
+        tools: lista de tools pre-construidas (override do helper legacy).
+        state_schema: tipo de estado (default: ChatState legacy). Pra usar o
+            ChatState expandido novo, passe ``agent_state.ChatState``.
 
     Returns:
         Grafo compilado pronto pra `.ainvoke()` / `.astream_events()`.
     """
-    tools = _build_tools(inference_svc, action_plan_svc)
+    if tools is None:
+        if inference_svc is None or action_plan_svc is None:
+            raise ValueError(
+                "build_graph requer 'tools' OU (inference_svc + action_plan_svc)"
+            )
+        tools = _build_tools(inference_svc, action_plan_svc)
 
     if llm is None:
         llm = ChatOpenAI(
@@ -187,7 +213,8 @@ def build_graph(
 
     llm_with_tools = llm.bind_tools(tools)
 
-    workflow: StateGraph = StateGraph(ChatState)
+    schema = state_schema or ChatState
+    workflow: StateGraph = StateGraph(schema)
     workflow.add_node("llm", _make_llm_node(llm_with_tools))
     workflow.add_node("tools", ToolNode(tools))
 
