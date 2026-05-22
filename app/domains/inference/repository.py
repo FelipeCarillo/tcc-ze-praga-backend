@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.crop import Crop
 from app.models.disease import Disease
 
-
 # ── DTOs ─────────────────────────────────────────────────────────────────────
 
 
@@ -34,7 +33,7 @@ class CropDTO:
     is_active: bool
 
     @classmethod
-    def from_orm(cls, crop: Crop) -> "CropDTO":
+    def from_orm(cls, crop: Crop) -> CropDTO:
         return cls(
             id=crop.id,
             slug=crop.slug,
@@ -57,7 +56,7 @@ class DiseaseDTO:
     image_url: str | None
 
     @classmethod
-    def from_orm(cls, disease: Disease) -> "DiseaseDTO":
+    def from_orm(cls, disease: Disease) -> DiseaseDTO:
         return cls(
             id=disease.id,
             crop_id=disease.crop_id,
