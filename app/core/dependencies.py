@@ -66,6 +66,18 @@ def get_chat_message_repository(db: AsyncSession = Depends(get_db)):  # type: ig
     return ChatMessageRepository(db)
 
 
+def get_crop_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
+    from app.domains.inference.repository import CropRepository
+
+    return CropRepository(db)
+
+
+def get_disease_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
+    from app.domains.inference.repository import DiseaseRepository
+
+    return DiseaseRepository(db)
+
+
 # ── Services ──────────────────────────────────────────────────────────────────
 
 
@@ -110,10 +122,25 @@ def get_action_plan_service(repo=Depends(get_action_plan_repository)):  # type: 
     return ActionPlanService(repo)
 
 
-def get_inference_service():  # type: ignore[no-untyped-def]
+async def get_inference_service(  # type: ignore[no-untyped-def]
+    crop_repo=Depends(get_crop_repository),
+    disease_repo=Depends(get_disease_repository),
+):
+    """Carrega o catalogo de doencas da soja e instancia o InferenceService.
+
+    Usa cache do DiseaseRepository — chamada repetida nao bate no DB.
+    O catalogo e' carregado pra crop ``soja`` por padrao (multi-cultivo
+    completo vem em sprint A2).
+    """
     from app.domains.inference.service import InferenceService
 
-    return InferenceService()
+    crop = await crop_repo.get_by_slug("soja")
+    if crop is None:
+        raise RuntimeError(
+            "Crop 'soja' nao encontrada no DB — rode `uv run python -m scripts.seed_crops`."
+        )
+    diseases = await disease_repo.list_by_crop(crop.id)
+    return InferenceService(diseases=diseases)
 
 
 def get_chat_service(  # type: ignore[no-untyped-def]

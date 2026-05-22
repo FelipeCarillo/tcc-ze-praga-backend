@@ -107,10 +107,54 @@ def _make_action_plan_response(disease_id: str = "ferrugem-asiatica") -> ActionP
     )
 
 
+def _make_disease_dto(
+    slug: str = "ferrugem-asiatica",
+    name_pt: str = "Ferrugem Asiática",
+    scientific_name: str | None = "Phakopsora pachyrhizi",
+    severity_default: str = "alta",
+    description_md: str | None = "Doença severa.",
+):
+    from app.domains.inference.repository import DiseaseDTO
+
+    return DiseaseDTO(
+        id=f"dto-{slug}",
+        crop_id="soja-id",
+        slug=slug,
+        name_pt=name_pt,
+        scientific_name=scientific_name,
+        severity_default=severity_default,
+        description_md=description_md,
+        image_url=None,
+    )
+
+
+_MOCK_CATALOG = [
+    _make_disease_dto(),
+    _make_disease_dto(
+        slug="mancha-alvo",
+        name_pt="Mancha-Alvo",
+        scientific_name="Corynespora cassiicola",
+        severity_default="media",
+    ),
+    _make_disease_dto(
+        slug="antracnose",
+        name_pt="Antracnose",
+        scientific_name="Colletotrichum truncatum",
+        severity_default="media",
+    ),
+]
+
+
 @pytest.fixture
 def mock_inference_svc() -> MagicMock:
     svc = MagicMock()
     svc.predict.return_value = _make_inference_result()
+    svc.disease_catalog = list(_MOCK_CATALOG)
+
+    def _get_by_slug(slug: str):
+        return next((d for d in _MOCK_CATALOG if d.slug == slug), None)
+
+    svc.get_disease_by_slug.side_effect = _get_by_slug
     return svc
 
 
