@@ -84,6 +84,16 @@ def get_uploaded_file_repository(db: AsyncSession = Depends(get_db)):  # type: i
     return UploadedFileRepository(db)
 
 
+# ── Store (long-term memory) ──────────────────────────────────────────────────
+
+
+async def get_store_dep():  # type: ignore[no-untyped-def]
+    """Dependency-injection wrapper para o singleton ``AsyncPostgresStore``."""
+    from app.db.store import get_store
+
+    return await get_store()
+
+
 # ── Services ──────────────────────────────────────────────────────────────────
 
 

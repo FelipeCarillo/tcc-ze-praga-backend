@@ -27,6 +27,10 @@ from app.domains.users.router import router as users_router
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield  # pragma: no cover
+    # Lifespan shutdown — fecha o Store singleton se estiver aberto.
+    from app.db.store import close_store
+
+    await close_store()
 
 
 app = FastAPI(
