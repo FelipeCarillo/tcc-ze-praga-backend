@@ -35,7 +35,7 @@ def _factories() -> dict[str, callable]:
 
 
 def test_default_tier_sees_all_basic_tools() -> None:
-    """Free tier sem features ativa todas as 4 tools base."""
+    """Free tier sem features ativa todas as 4 tools base (compare_diagnoses fica fora)."""
     names = get_active_tool_names({})
     assert names == [
         "deep_diagnose",
@@ -56,8 +56,17 @@ def test_free_tier_explicit_same_as_default() -> None:
 
 
 def test_pro_tier_sees_base_tools() -> None:
+    """Pro nao tem compare_diagnoses (Enterprise-only) — 4 tools."""
     names = get_active_tool_names({"tier_name": "pro"})
     assert len(names) == 4
+    assert "compare_diagnoses" not in names
+
+
+def test_enterprise_tier_unlocks_compare_diagnoses() -> None:
+    """Enterprise vê todas as 4 base + compare_diagnoses."""
+    names = get_active_tool_names({"tier_name": "enterprise"})
+    assert len(names) == 5
+    assert "compare_diagnoses" in names
 
 
 def test_global_flag_off_skips_tool(monkeypatch) -> None:
@@ -267,16 +276,27 @@ def test_tool_config_is_frozen() -> None:
         cfg.name = "y"  # type: ignore[misc]
 
 
-def test_default_registry_has_four_base_tools() -> None:
-    """Smoke-test do registry default."""
+def test_default_registry_has_five_tools_post_a3() -> None:
+    """Smoke-test do registry default (TCC-050 adicionou compare_diagnoses)."""
     cfgs = get_registry()
     assert {c.name for c in cfgs} == {
         "deep_diagnose",
         "get_disease_info",
         "get_action_plan",
         "search_my_diagnoses",
+        "compare_diagnoses",
     }
     for c in cfgs:
         assert c.enabled_globally is True
         assert c.required_feature is None
-        assert c.min_tier is None
+
+
+def test_compare_diagnoses_gated_for_enterprise_only() -> None:
+    """compare_diagnoses deve aparecer SO' pra tier enterprise."""
+    free = set(get_active_tool_names({"tier_name": "free"}))
+    pro = set(get_active_tool_names({"tier_name": "pro"}))
+    enterprise = set(get_active_tool_names({"tier_name": "enterprise"}))
+
+    assert "compare_diagnoses" not in free
+    assert "compare_diagnoses" not in pro
+    assert "compare_diagnoses" in enterprise
