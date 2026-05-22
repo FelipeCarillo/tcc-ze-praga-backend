@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     openai_embeddings_dims: int = 1536
     openai_vision_model: str = "gpt-4o"
 
+    # Agent feature flags — kill-switches deploy-time pras tools V2 dormentes.
+    # Default OFF; ative junto com a feature do plano (ex: identify_crop_auto)
+    # pra liberar a tool no registry.
+    agent_enable_identify_crop: bool = False
+
     # App
     app_env: str = "development"
     allowed_origins: str = "http://localhost:3000"

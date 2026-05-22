@@ -184,10 +184,14 @@ async def test_identify_crop_respects_plan_allowed_crops() -> None:
         '{"crop_id":"cafe","confidence":0.92,"reason":"x"}'
     )
     with patcher:
+        from app.domains.subscriptions.features import PlanFeatures
+
         tool = build_identify_crop_tool()
         state = {
             "uploaded_files": [_file("img-1")],
-            "plan_features": {"allowed_crops": ["cafe", "cacau"]},
+            "plan_features": PlanFeatures(
+                tier_name="pro", allowed_crops=["cafe", "cacau"]
+            ),
         }
 
         result = await tool.ainvoke({"image_id": "img-1", "state": state})

@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool
 
+from app.config import settings
+
 
 @dataclass(frozen=True)
 class ToolConfig:
@@ -106,6 +108,17 @@ def get_registry() -> list[ToolConfig]:
             min_tier="enterprise",
             description=(
                 "Compara multiplos modelos na mesma imagem (Enterprise)."
+            ),
+        ),
+        ToolConfig(
+            name="identify_crop",
+            version=2,
+            factory_key="identify_crop",
+            enabled_globally=settings.agent_enable_identify_crop,
+            required_feature="identify_crop_auto",
+            min_tier="pro",
+            description=(
+                "Identifica cultivo via gpt-4o vision (V2 — multi-cultivo)."
             ),
         ),
     ]

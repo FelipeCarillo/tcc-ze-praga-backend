@@ -55,7 +55,14 @@ def build_identify_crop_tool():
         if image is None or not image.b64:
             return Command(update={"messages": []})
 
-        allowed = state.get("plan_features", {}).get("allowed_crops")
+        # plan_features pode vir como PlanFeatures (Sprint A3) ou dict (legacy)
+        plan_features = state.get("plan_features")
+        allowed: list[str] | None = None
+        if plan_features is not None:
+            if hasattr(plan_features, "allowed_crops"):
+                allowed = plan_features.allowed_crops
+            elif isinstance(plan_features, dict):
+                allowed = plan_features.get("allowed_crops")
         if not allowed:
             allowed = ["soja", "milho", "trigo", "cafe", "algodao", "feijao"]
 
