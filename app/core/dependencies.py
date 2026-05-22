@@ -78,7 +78,24 @@ def get_disease_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[
     return DiseaseRepository(db)
 
 
+def get_uploaded_file_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
+    from app.domains.uploads.repository import UploadedFileRepository
+
+    return UploadedFileRepository(db)
+
+
 # ── Services ──────────────────────────────────────────────────────────────────
+
+
+def get_upload_service(  # type: ignore[no-untyped-def]
+    repo=Depends(get_uploaded_file_repository),
+):
+    """UploadService com SupabaseStorageUploader (lru_cache no client)."""
+    from app.db.storage import get_storage_client
+    from app.domains.uploads.service import SupabaseStorageUploader, UploadService
+
+    uploader = SupabaseStorageUploader(get_storage_client())
+    return UploadService(repo, uploader)
 
 
 def get_auth_service(
