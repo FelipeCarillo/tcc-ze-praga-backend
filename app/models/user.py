@@ -34,3 +34,6 @@ class User(Base):
     usage_logs: Mapped[list["UsageLog"]] = relationship(  # type: ignore[name-defined] # noqa: F821
         back_populates="user", cascade="all, delete-orphan"
     )
+    chat_sessions: Mapped[list["ChatSession"]] = relationship(  # type: ignore[name-defined] # noqa: F821
+        back_populates="user", cascade="all, delete-orphan"
+    )
