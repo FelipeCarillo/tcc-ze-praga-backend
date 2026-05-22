@@ -138,6 +138,48 @@ def test_get_inference_service():
     assert isinstance(result, InferenceService)
 
 
+def test_get_chat_session_repository():
+    from app.core.dependencies import get_chat_session_repository
+    from app.domains.chat.repository import ChatSessionRepository
+
+    db = MagicMock(spec=AsyncSession)
+    result = get_chat_session_repository(db)
+    assert isinstance(result, ChatSessionRepository)
+
+
+def test_get_chat_message_repository():
+    from app.core.dependencies import get_chat_message_repository
+    from app.domains.chat.repository import ChatMessageRepository
+
+    db = MagicMock(spec=AsyncSession)
+    result = get_chat_message_repository(db)
+    assert isinstance(result, ChatMessageRepository)
+
+
+def test_get_chat_service():
+    from app.core.dependencies import get_chat_service
+    from app.domains.action_plans.service import ActionPlanService
+    from app.domains.chat.repository import ChatMessageRepository, ChatSessionRepository
+    from app.domains.chat.service import ChatService
+    from app.domains.diagnoses.service import DiagnosisService
+    from app.domains.inference.service import InferenceService
+
+    session_repo = MagicMock(spec=ChatSessionRepository)
+    message_repo = MagicMock(spec=ChatMessageRepository)
+    inference_svc = MagicMock(spec=InferenceService)
+    action_plan_svc = MagicMock(spec=ActionPlanService)
+    diagnosis_svc = MagicMock(spec=DiagnosisService)
+
+    result = get_chat_service(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+    )
+    assert isinstance(result, ChatService)
+
+
 # ── get_current_user — success path ──────────────────────────────────────────
 
 async def test_get_current_user_success():

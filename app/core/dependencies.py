@@ -17,6 +17,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
@@ -24,31 +25,49 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 # ── Repositories ──────────────────────────────────────────────────────────────
 
+
 def get_user_repository(db: AsyncSession = Depends(get_db)) -> UserRepository:
     return UserRepository(db)
 
 
 def get_subscription_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
     from app.domains.subscriptions.repository import SubscriptionRepository
+
     return SubscriptionRepository(db)
 
 
 def get_usage_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
     from app.domains.usage.repository import UsageRepository
+
     return UsageRepository(db)
 
 
 def get_diagnosis_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
     from app.domains.diagnoses.repository import DiagnosisRepository
+
     return DiagnosisRepository(db)
 
 
 def get_action_plan_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
     from app.domains.action_plans.repository import ActionPlanRepository
+
     return ActionPlanRepository(db)
 
 
+def get_chat_session_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
+    from app.domains.chat.repository import ChatSessionRepository
+
+    return ChatSessionRepository(db)
+
+
+def get_chat_message_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
+    from app.domains.chat.repository import ChatMessageRepository
+
+    return ChatMessageRepository(db)
+
+
 # ── Services ──────────────────────────────────────────────────────────────────
+
 
 def get_auth_service(
     repo: UserRepository = Depends(get_user_repository),
@@ -58,11 +77,13 @@ def get_auth_service(
 
 def get_user_service(repo: UserRepository = Depends(get_user_repository)):  # type: ignore[no-untyped-def]
     from app.domains.users.service import UserService
+
     return UserService(repo)
 
 
 def get_subscription_service(repo=Depends(get_subscription_repository)):  # type: ignore[no-untyped-def]
     from app.domains.subscriptions.service import SubscriptionService
+
     return SubscriptionService(repo)
 
 
@@ -71,6 +92,7 @@ def get_usage_service(  # type: ignore[no-untyped-def]
     sub_repo=Depends(get_subscription_repository),
 ):
     from app.domains.usage.service import UsageService
+
     return UsageService(usage_repo, sub_repo)
 
 
@@ -78,20 +100,42 @@ def get_diagnosis_service(  # type: ignore[no-untyped-def]
     repo=Depends(get_diagnosis_repository),
 ):
     from app.domains.diagnoses.service import DiagnosisService
+
     return DiagnosisService(repo)
 
 
 def get_action_plan_service(repo=Depends(get_action_plan_repository)):  # type: ignore[no-untyped-def]
     from app.domains.action_plans.service import ActionPlanService
+
     return ActionPlanService(repo)
 
 
 def get_inference_service():  # type: ignore[no-untyped-def]
     from app.domains.inference.service import InferenceService
+
     return InferenceService()
 
 
+def get_chat_service(  # type: ignore[no-untyped-def]
+    session_repo=Depends(get_chat_session_repository),
+    message_repo=Depends(get_chat_message_repository),
+    inference_svc=Depends(get_inference_service),
+    action_plan_svc=Depends(get_action_plan_service),
+    diagnosis_svc=Depends(get_diagnosis_service),
+):
+    from app.domains.chat.service import ChatService
+
+    return ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+    )
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
+
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -105,6 +149,7 @@ async def get_current_user(
 
 
 # ── Quota ─────────────────────────────────────────────────────────────────────
+
 
 def require_quota(feature: FeatureTypeEnum):  # type: ignore[no-untyped-def]
     async def _dependency(
