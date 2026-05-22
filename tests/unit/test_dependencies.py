@@ -130,12 +130,76 @@ def test_get_action_plan_service():
     assert isinstance(result, ActionPlanService)
 
 
-def test_get_inference_service():
+async def test_get_inference_service():
+    """Agora async — recebe CropRepository/DiseaseRepository por DI."""
     from app.core.dependencies import get_inference_service
+    from app.domains.inference.repository import (
+        CropDTO,
+        CropRepository,
+        DiseaseDTO,
+        DiseaseRepository,
+    )
     from app.domains.inference.service import InferenceService
 
-    result = get_inference_service()
+    crop_dto = CropDTO(
+        id="soja-id",
+        slug="soja",
+        name_pt="Soja",
+        scientific_name="Glycine max",
+        kingdom="Plantae",
+        is_active=True,
+    )
+    disease_dto = DiseaseDTO(
+        id="d-1",
+        crop_id="soja-id",
+        slug="ferrugem-asiatica",
+        name_pt="Ferrugem Asiática",
+        scientific_name="Phakopsora pachyrhizi",
+        severity_default="alta",
+        description_md="Desc",
+        image_url=None,
+    )
+
+    crop_repo = MagicMock(spec=CropRepository)
+    crop_repo.get_by_slug = AsyncMock(return_value=crop_dto)
+    disease_repo = MagicMock(spec=DiseaseRepository)
+    disease_repo.list_by_crop = AsyncMock(return_value=[disease_dto])
+
+    result = await get_inference_service(crop_repo=crop_repo, disease_repo=disease_repo)
     assert isinstance(result, InferenceService)
+    crop_repo.get_by_slug.assert_awaited_once_with("soja")
+    disease_repo.list_by_crop.assert_awaited_once_with("soja-id")
+
+
+async def test_get_inference_service_raises_when_soja_missing():
+    """Sem crop 'soja' no DB, factory levanta RuntimeError."""
+    from app.core.dependencies import get_inference_service
+    from app.domains.inference.repository import CropRepository, DiseaseRepository
+
+    crop_repo = MagicMock(spec=CropRepository)
+    crop_repo.get_by_slug = AsyncMock(return_value=None)
+    disease_repo = MagicMock(spec=DiseaseRepository)
+
+    with pytest.raises(RuntimeError, match="seed_crops"):
+        await get_inference_service(crop_repo=crop_repo, disease_repo=disease_repo)
+
+
+def test_get_crop_repository():
+    from app.core.dependencies import get_crop_repository
+    from app.domains.inference.repository import CropRepository
+
+    db = MagicMock(spec=AsyncSession)
+    result = get_crop_repository(db)
+    assert isinstance(result, CropRepository)
+
+
+def test_get_disease_repository():
+    from app.core.dependencies import get_disease_repository
+    from app.domains.inference.repository import DiseaseRepository
+
+    db = MagicMock(spec=AsyncSession)
+    result = get_disease_repository(db)
+    assert isinstance(result, DiseaseRepository)
 
 
 def test_get_chat_session_repository():

@@ -122,23 +122,21 @@ def _build_tools(
         """Retorna informações estruturadas sobre uma doença a partir do catálogo interno.
 
         Args:
-            disease_id: identificador da doença (ex: ferrugem-asiatica, mancha-alvo).
+            disease_id: identificador (slug) da doença (ex: ferrugem-asiatica, mancha-alvo).
         """
-        # Acesso direto ao catálogo de classe — não depende de instância.
-        from app.domains.inference.service import InferenceService
+        # Consulta o catálogo via service (que recebeu DiseaseDTOs do DB via DI).
+        disease = inference_svc.get_disease_by_slug(disease_id)
+        if disease is not None:
+            payload = {
+                "id": disease.slug,
+                "name": disease.name_pt,
+                "scientific_name": disease.scientific_name,
+                "severity": str(disease.severity_default),
+                "description": disease.description_md,
+            }
+            return json.dumps(payload, ensure_ascii=False)
 
-        for disease in InferenceService._DISEASES:
-            if disease["id"] == disease_id:
-                payload = {
-                    "id": disease["id"],
-                    "name": disease["name"],
-                    "scientific_name": disease["scientific_name"],
-                    "severity": str(disease["severity"]),
-                    "description": disease["description"],
-                }
-                return json.dumps(payload, ensure_ascii=False)
-
-        valid_ids = [d["id"] for d in InferenceService._DISEASES]
+        valid_ids = [d.slug for d in inference_svc.disease_catalog]
         return (
             f"Doença '{disease_id}' não encontrada no catálogo. "
             f"IDs válidos: {', '.join(valid_ids)}."

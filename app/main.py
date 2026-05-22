@@ -19,6 +19,7 @@ from app.domains.chat.router import router as chat_router
 from app.domains.diagnoses.router import router as diagnoses_router
 from app.domains.inference.router import router as inference_router
 from app.domains.subscriptions.router import router as subscriptions_router
+from app.domains.uploads.router import router as uploads_router
 from app.domains.usage.router import router as usage_router
 from app.domains.users.router import router as users_router
 
@@ -92,6 +93,7 @@ app.include_router(inference_router, prefix=API_PREFIX)
 app.include_router(chat_router, prefix=API_PREFIX)
 app.include_router(action_plans_router, prefix=API_PREFIX)
 app.include_router(subscriptions_router, prefix=API_PREFIX)
+app.include_router(uploads_router, prefix=API_PREFIX)
 app.include_router(usage_router, prefix=API_PREFIX)
 
 
