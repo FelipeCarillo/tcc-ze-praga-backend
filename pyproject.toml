@@ -17,6 +17,11 @@ dependencies = [
     "bcrypt>=4.0.0",
     "python-multipart>=0.0.12",
     "httpx>=0.28.0",
+    "openai>=2.38.0",
+    "langgraph>=1.2.1",
+    "langgraph-checkpoint-postgres>=3.1.0",
+    "langchain-openai>=1.2.2",
+    "sse-starlette>=3.4.4",
 ]
 
 [dependency-groups]
@@ -28,6 +33,7 @@ dev = [
     "httpx>=0.28.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    "pytest-mock>=3.15.1",
 ]
 
 [build-system]
@@ -60,6 +66,7 @@ omit = ["app/db/storage.py"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+fail_under = 85
 
 [tool.mypy]
 python_version = "3.12"
