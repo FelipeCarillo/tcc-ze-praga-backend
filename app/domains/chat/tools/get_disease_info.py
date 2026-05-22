@@ -8,7 +8,8 @@ manager) pra abrir sessao quando precisar.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Callable
+from collections.abc import Callable
+from typing import Annotated
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState

@@ -34,10 +34,10 @@ if TYPE_CHECKING:
 
 
 def build_diagnosis_graph(
-    inference_svc: "InferenceService",
-    action_plan_svc: "ActionPlanService",
-    diagnosis_svc: "DiagnosisService",
-) -> "CompiledStateGraph":
+    inference_svc: InferenceService,
+    action_plan_svc: ActionPlanService,
+    diagnosis_svc: DiagnosisService,
+) -> CompiledStateGraph:
     """Compila o sub-grafo de diagnostico com os services injetados.
 
     Args:

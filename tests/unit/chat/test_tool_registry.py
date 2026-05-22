@@ -252,6 +252,8 @@ def test_build_tools_respects_plan_features(monkeypatch) -> None:
 
 
 def test_tool_config_is_frozen() -> None:
+    import dataclasses
+
     cfg = ToolConfig(
         name="x",
         version=1,
@@ -261,7 +263,7 @@ def test_tool_config_is_frozen() -> None:
         min_tier=None,
         description="",
     )
-    with pytest.raises(Exception):  # FrozenInstanceError
+    with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.name = "y"  # type: ignore[misc]
 
 

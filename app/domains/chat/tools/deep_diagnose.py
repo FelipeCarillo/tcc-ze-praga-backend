@@ -12,7 +12,8 @@ e nao sao expostos ao LLM.
 from __future__ import annotations
 
 import json
-from typing import Annotated, Callable
+from collections.abc import Callable
+from typing import Annotated
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
@@ -41,11 +42,14 @@ def build_deep_diagnose_tool(
         *,
         state: Annotated[ChatState, InjectedState],
     ) -> str:
-        """Diagnostica uma ou mais imagens. Se image_ids omitido, processa TODAS as imagens do turno.
+        """Diagnostica uma ou mais imagens.
+
+        Se ``image_ids`` for omitido, processa TODAS as imagens do turno.
 
         Exemplos:
         - User mandou 1 foto: chame sem args
-        - User mandou 3 e disse "analisa as duas primeiras": image_ids=["img-1","img-2"]
+        - User mandou 3 e disse "analisa as duas primeiras":
+          image_ids=["img-1","img-2"]
         """
         targets = list(state.get("uploaded_files", []) or [])
         if image_ids is not None:

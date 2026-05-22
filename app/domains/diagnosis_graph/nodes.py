@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 async def load_model_node(
     state: DiagnosisState,
     *,
-    inference_svc: "InferenceService",
+    inference_svc: InferenceService,
 ) -> dict:
     """Placeholder pra inicializacao do modelo + validacao do crop_id.
 
@@ -48,7 +48,7 @@ async def load_model_node(
 async def run_inference_node(
     state: DiagnosisState,
     *,
-    inference_svc: "InferenceService",
+    inference_svc: InferenceService,
 ) -> dict:
     """Roda predict pra cada imagem do batch e populates ``predictions``.
 
@@ -91,7 +91,7 @@ async def run_inference_node(
 async def compose_action_plan_node(
     state: DiagnosisState,
     *,
-    action_plan_svc: "ActionPlanService",
+    action_plan_svc: ActionPlanService,
 ) -> dict:
     """Busca plano de acao por disease detectado.
 
@@ -125,7 +125,7 @@ async def compose_action_plan_node(
 async def persist_node(
     state: DiagnosisState,
     *,
-    diagnosis_svc: "DiagnosisService",
+    diagnosis_svc: DiagnosisService,
 ) -> dict:
     """Cria 1 row em ``diagnoses`` por imagem do batch."""
     persisted: list[str] = []

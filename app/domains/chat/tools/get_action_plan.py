@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def build_get_action_plan_tool(
-    action_plan_svc: "ActionPlanService",
+    action_plan_svc: ActionPlanService,
 ) -> BaseTool:
     """Factory pra ``get_action_plan``."""
 

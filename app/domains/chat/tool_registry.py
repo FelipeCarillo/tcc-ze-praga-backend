@@ -17,8 +17,8 @@ Plan features (Sprint A3 trara ``PlanFeatures`` tipado):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from langchain_core.tools import BaseTool
 
