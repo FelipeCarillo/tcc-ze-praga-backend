@@ -174,6 +174,7 @@ def build_graph(
     checkpointer=None,  # type: ignore[no-untyped-def]
     tools: list[BaseTool] | None = None,
     state_schema: type | None = None,
+    summarize_llm: BaseChatModel | None = None,
 ) -> "CompiledStateGraph":
     """Monta e compila o grafo do Zé Praga.
 
@@ -182,6 +183,9 @@ def build_graph(
 
     Modo novo (TCC-041): passa ``tools`` pre-construidas via factories. Quando
     ``tools`` eh dado, ``inference_svc``/``action_plan_svc`` viram opcionais.
+
+    Em Sprint A2.5 (TCC-047) introduzimos ``maybe_summarize_node`` ANTES do
+    LLM — comprime historico quando ele cresce alem de 20 mensagens.
 
     Args:
         inference_svc: serviço de inferência (mock CNN/ViT). Usado so quando
@@ -194,6 +198,8 @@ def build_graph(
         tools: lista de tools pre-construidas (override do helper legacy).
         state_schema: tipo de estado (default: ChatState legacy). Pra usar o
             ChatState expandido novo, passe ``agent_state.ChatState``.
+        summarize_llm: LLM dedicado pra rolling summary. Quando ``None``
+            usa o mesmo ``llm`` do agente principal.
 
     Returns:
         Grafo compilado pronto pra `.ainvoke()` / `.astream_events()`.
@@ -215,10 +221,22 @@ def build_graph(
 
     schema = state_schema or ChatState
     workflow: StateGraph = StateGraph(schema)
+
+    # Sprint A2.5: rolling summary antes do LLM pra controlar custo/contexto.
+    from functools import partial
+
+    from app.domains.chat.nodes import maybe_summarize_node
+
+    summary_llm = summarize_llm or llm
+    workflow.add_node(
+        "maybe_summarize",
+        partial(maybe_summarize_node, llm=summary_llm),
+    )
     workflow.add_node("llm", _make_llm_node(llm_with_tools))
     workflow.add_node("tools", ToolNode(tools))
 
-    workflow.add_edge(START, "llm")
+    workflow.add_edge(START, "maybe_summarize")
+    workflow.add_edge("maybe_summarize", "llm")
     workflow.add_conditional_edges(
         "llm",
         tools_condition,
