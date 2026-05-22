@@ -250,6 +250,93 @@ async def test_persist_node_creates_one_diagnosis_per_image(mock_diagnosis_svc):
     assert args_first.args[1].image_name == "leaf-1.jpg"
 
 
+async def test_persist_node_indexes_in_store_when_provided(mock_diagnosis_svc):
+    """TCC-045: quando store eh passado, cada diagnosis vira aput no namespace correto."""
+    state = {
+        "user_id": "user-uuid-1",
+        "model_id": "ensemble",
+        "image_ids": ["leaf-1.jpg"],
+        "predictions": [
+            {
+                "disease_id": "ferrugem-asiatica",
+                "disease_name": "Ferrugem Asiática",
+                "scientific_name": "Phakopsora pachyrhizi",
+                "severity": "alta",
+                "confidence": 0.91,
+                "description": None,
+                "top3": [],
+            }
+        ],
+    }
+    mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
+    store = AsyncMock()
+
+    update = await persist_node(
+        state, diagnosis_svc=mock_diagnosis_svc, store=store
+    )
+
+    assert update["persisted_ids"] == ["diag-1"]
+    store.aput.assert_awaited_once()
+    aput_kwargs = store.aput.call_args.kwargs
+    assert aput_kwargs["namespace"] == ("user", "user-uuid-1", "diagnoses")
+    assert aput_kwargs["key"] == "diag-1"
+
+
+async def test_persist_node_swallows_store_errors(mock_diagnosis_svc, caplog):
+    """Erros do Store nao quebram o persist — diagnosis fica no DB mesmo assim."""
+    state = {
+        "user_id": "user-uuid-1",
+        "model_id": "ensemble",
+        "image_ids": ["leaf-1.jpg"],
+        "predictions": [
+            {
+                "disease_id": "ferrugem-asiatica",
+                "disease_name": "Ferrugem Asiática",
+                "scientific_name": "Phakopsora pachyrhizi",
+                "severity": "alta",
+                "confidence": 0.91,
+                "description": None,
+                "top3": [],
+            }
+        ],
+    }
+    mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
+    store = AsyncMock()
+    store.aput.side_effect = RuntimeError("Store offline")
+
+    update = await persist_node(
+        state, diagnosis_svc=mock_diagnosis_svc, store=store
+    )
+
+    assert update["persisted_ids"] == ["diag-1"]
+    assert "Failed to index diagnosis diag-1 in Store" in caplog.text
+
+
+async def test_persist_node_no_store_skips_indexing(mock_diagnosis_svc):
+    """Sem store, nada acontece com indexing — back-compat."""
+    state = {
+        "user_id": "user-uuid-1",
+        "model_id": "ensemble",
+        "image_ids": ["leaf-1.jpg"],
+        "predictions": [
+            {
+                "disease_id": "ferrugem-asiatica",
+                "disease_name": "Ferrugem Asiática",
+                "scientific_name": "Phakopsora pachyrhizi",
+                "severity": "alta",
+                "confidence": 0.91,
+                "description": None,
+                "top3": [],
+            }
+        ],
+    }
+    mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
+
+    update = await persist_node(state, diagnosis_svc=mock_diagnosis_svc)
+
+    assert update["persisted_ids"] == ["diag-1"]
+
+
 # ── End-to-end graph ─────────────────────────────────────────────────────────
 
 
