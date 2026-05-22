@@ -1,13 +1,17 @@
 """Roteador do Zé Praga — orquestra agente LangGraph + persistência.
 
 Substituiu (TCC-010) o keyword-matching antigo por chamada real ao agente via
-ChatService. Mantém o helper _extract_last_message do TCC-005 (regressão do
-parsing JSON robusto).
+ChatService. TCC-011 adicionou endpoint streaming /chat/stream (SSE) que reusa
+ChatService.chat_stream() — mantém /chat síncrono pra back-compat.
+
+Helper _extract_last_message preserva fix do TCC-005 (parsing JSON robusto).
 """
 
 import json
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sse_starlette.sse import EventSourceResponse
 
 from app.core.dependencies import (
     get_chat_service,
@@ -62,3 +66,40 @@ async def send_message(
         image_filename=image_filename,
         model_id=model,
     )
+
+
+@router.post("/stream", status_code=200)
+async def send_message_stream(
+    messages: str = Form(...),
+    model: str = Form(default=ModelEnum.ENSEMBLE),
+    image: UploadFile | None = File(default=None),
+    session_id: str | None = Form(default=None),
+    current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.CHAT)),
+    chat_svc: ChatService = Depends(get_chat_service),
+    usage_svc: UsageService = Depends(get_usage_service),
+) -> EventSourceResponse:
+    """SSE streaming endpoint — yields token/tool_call/tool_result/diagnosis/done."""
+    await usage_svc.record_usage(
+        current_user.id,
+        FeatureTypeEnum.CHAT,
+        {"model": model, "has_image": image is not None, "streaming": True},
+    )
+
+    message_text = _extract_last_message(messages)
+    image_filename = image.filename if image else None
+
+    async def _event_generator() -> AsyncIterator[dict[str, str]]:
+        async for event in chat_svc.chat_stream(
+            user_id=current_user.id,
+            session_id=session_id,
+            message_text=message_text,
+            image_filename=image_filename,
+            model_id=model,
+        ):
+            # sse-starlette espera dict {event, data}; data é serializado pra string.
+            data = event.get("data", "")
+            if not isinstance(data, str):
+                data = json.dumps(data, ensure_ascii=False, default=str)
+            yield {"event": event["event"], "data": data}
+
+    return EventSourceResponse(_event_generator())

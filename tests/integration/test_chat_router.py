@@ -200,3 +200,110 @@ async def test_chat_passes_session_id_through(client_chat, mock_chat_svc):
 
     assert r.status_code == 200
     assert mock_chat_svc.chat.await_args.kwargs["session_id"] == "existing-sess"
+
+
+# ── SSE streaming (TCC-011) ───────────────────────────────────────────────────
+
+
+async def _async_gen(events):
+    for e in events:
+        yield e
+
+
+async def test_chat_stream_emits_token_and_done_events(client_chat, mock_chat_svc):
+    """SSE endpoint streama tokens e marca done no final."""
+    mock_chat_svc.chat_stream = lambda **kwargs: _async_gen(
+        [
+            {"event": "token", "data": "Hello "},
+            {"event": "token", "data": "world"},
+            {"event": "done", "data": "sess-1"},
+        ]
+    )
+
+    async with client_chat.stream(
+        "POST",
+        "/api/v1/chat/stream",
+        data={"messages": "oi", "model": "ensemble"},
+    ) as r:
+        assert r.status_code == 200
+        assert "text/event-stream" in r.headers["content-type"]
+        lines = []
+        async for line in r.aiter_lines():
+            lines.append(line)
+
+    text = "\n".join(lines)
+    assert "event: token" in text
+    assert "data: Hello " in text
+    assert "data: world" in text
+    assert "event: done" in text
+
+
+async def test_chat_stream_serializes_dict_data(client_chat, mock_chat_svc):
+    """Quando data é dict (ex: diagnosis), serializa pra JSON-string."""
+    mock_chat_svc.chat_stream = lambda **kwargs: _async_gen(
+        [
+            {
+                "event": "diagnosis",
+                "data": {"id": "diag-1", "disease": "Ferrugem"},
+            },
+            {"event": "done", "data": "sess-1"},
+        ]
+    )
+
+    async with client_chat.stream(
+        "POST",
+        "/api/v1/chat/stream",
+        data={"messages": "analisa", "model": "ensemble"},
+    ) as r:
+        body = b""
+        async for chunk in r.aiter_bytes():
+            body += chunk
+
+    text = body.decode("utf-8")
+    assert "event: diagnosis" in text
+    # JSON-string deve ter sido emitido
+    assert "diag-1" in text
+    assert "Ferrugem" in text
+
+
+async def test_chat_stream_records_usage_with_streaming_flag(
+    client_chat, mock_chat_svc, mock_usage_svc
+):
+    mock_chat_svc.chat_stream = lambda **kwargs: _async_gen([{"event": "done", "data": "sess-1"}])
+
+    async with client_chat.stream(
+        "POST",
+        "/api/v1/chat/stream",
+        data={"messages": "oi", "model": "vit"},
+    ) as r:
+        async for _ in r.aiter_bytes():
+            pass
+
+    mock_usage_svc.record_usage.assert_awaited()
+    metadata = mock_usage_svc.record_usage.await_args.args[2]
+    assert metadata == {"model": "vit", "has_image": False, "streaming": True}
+
+
+async def test_chat_stream_passes_image_filename(client_chat, mock_chat_svc):
+    captured = {}
+
+    async def _capturing_stream(**kwargs):
+        captured.update(kwargs)
+        yield {"event": "done", "data": "sess-1"}
+
+    mock_chat_svc.chat_stream = _capturing_stream
+
+    files = {"image": ("folha.jpg", io.BytesIO(b"\x89PNG"), "image/jpeg")}
+
+    async with client_chat.stream(
+        "POST",
+        "/api/v1/chat/stream",
+        data={"messages": "analisa", "model": "ensemble"},
+        files=files,
+    ) as r:
+        async for _ in r.aiter_bytes():
+            pass
+
+    assert captured["image_filename"] == "folha.jpg"
+    assert captured["message_text"] == "analisa"
+    assert captured["model_id"] == "ensemble"
