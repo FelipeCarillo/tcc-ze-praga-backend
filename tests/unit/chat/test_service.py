@@ -236,6 +236,117 @@ async def test_chat_user_message_metadata_none_when_no_image(chat_service, messa
     assert user_msg_call.kwargs["metadata"] is None
 
 
+# ── TCC-051: plan_features resolution ────────────────────────────────────────
+
+
+async def test_resolve_plan_features_falls_back_to_free_when_no_sub_repo(chat_service):
+    """Sem sub_repo, sempre FREE_FEATURES."""
+    from app.domains.subscriptions.features import FREE_FEATURES
+
+    result = await chat_service._resolve_plan_features("user-1")
+    assert result == FREE_FEATURES
+
+
+async def test_resolve_plan_features_falls_back_to_free_when_no_subscription(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc
+):
+    from app.domains.subscriptions.features import FREE_FEATURES
+
+    sub_repo = AsyncMock()
+    sub_repo.find_user_subscription = AsyncMock(return_value=None)
+
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        sub_repo=sub_repo,
+    )
+    result = await svc._resolve_plan_features("user-1")
+    assert result == FREE_FEATURES
+
+
+async def test_resolve_plan_features_parses_pro(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc
+):
+    from app.domains.subscriptions.dto import PlanDTO, SubscriptionDTO
+    from app.domains.subscriptions.features import PRO_FEATURES
+
+    plan_dto = PlanDTO(
+        id="p-1",
+        name="pro",
+        display_name="Pro",
+        chat_daily_limit=None,
+        inference_daily_limit=None,
+        api_monthly_limit=500,
+        is_active=True,
+        features=PRO_FEATURES.model_dump(),
+    )
+    sub_dto = SubscriptionDTO(
+        id="s-1",
+        user_id="user-1",
+        plan=plan_dto,
+        started_at=NOW,
+        expires_at=None,
+        is_active=True,
+    )
+    sub_repo = AsyncMock()
+    sub_repo.find_user_subscription = AsyncMock(return_value=sub_dto)
+
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        sub_repo=sub_repo,
+    )
+    result = await svc._resolve_plan_features("user-1")
+    assert result.tier_name == "pro"
+    assert result.llm_model == "gpt-4o"
+
+
+async def test_resolve_plan_features_resilient_to_bad_features_dict(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc
+):
+    """Quando features tem keys invalidos, cai em FREE_FEATURES (resilient)."""
+    from app.domains.subscriptions.dto import PlanDTO, SubscriptionDTO
+    from app.domains.subscriptions.features import FREE_FEATURES
+
+    plan_dto = PlanDTO(
+        id="p-1",
+        name="weird",
+        display_name="Weird",
+        chat_daily_limit=None,
+        inference_daily_limit=None,
+        api_monthly_limit=None,
+        is_active=True,
+        features={"invalid_key": True},  # falta tier_name -> ValidationError
+    )
+    sub_dto = SubscriptionDTO(
+        id="s-1",
+        user_id="user-1",
+        plan=plan_dto,
+        started_at=NOW,
+        expires_at=None,
+        is_active=True,
+    )
+    sub_repo = AsyncMock()
+    sub_repo.find_user_subscription = AsyncMock(return_value=sub_dto)
+
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        sub_repo=sub_repo,
+    )
+    result = await svc._resolve_plan_features("user-1")
+    assert result == FREE_FEATURES
+
+
 # ── _extract_final_text ───────────────────────────────────────────────────────
 
 

@@ -1,9 +1,13 @@
-"""LangGraph agent para o Zé Praga — orquestra LLM + tools (Sprint A2).
+"""LangGraph agent para o Zé Praga — orquestra LLM + tools (Sprint A2 / A3).
 
 A partir de TCC-041 as tools moram em ``app/domains/chat/tools/`` e sao
 construidas via factories injetadas. Para retro-compat, o ``_build_tools``
 legacy continua disponivel (consumido pelo ``ChatService`` atual e pelos
 testes do PR #2), agora delegando para as factories novas com adapters.
+
+Sprint A3 (TCC-051): ``build_graph`` aceita ``plan_features: PlanFeatures``
+opcional pra escolher o LLM model (gpt-4o-mini vs gpt-4o) dinamicamente
+por tier.
 
 O grafo aceita ``tools: list[BaseTool] | None``:
     - se passado, usa direto;
@@ -34,6 +38,7 @@ if TYPE_CHECKING:
 
     from app.domains.action_plans.service import ActionPlanService
     from app.domains.inference.service import InferenceService
+    from app.domains.subscriptions.features import PlanFeatures
 
 
 SYSTEM_PROMPT = (
@@ -175,6 +180,7 @@ def build_graph(
     tools: list[BaseTool] | None = None,
     state_schema: type | None = None,
     summarize_llm: BaseChatModel | None = None,
+    plan_features: "PlanFeatures | None" = None,
 ) -> "CompiledStateGraph":
     """Monta e compila o grafo do Zé Praga.
 
@@ -186,6 +192,11 @@ def build_graph(
 
     Em Sprint A2.5 (TCC-047) introduzimos ``maybe_summarize_node`` ANTES do
     LLM — comprime historico quando ele cresce alem de 20 mensagens.
+
+    Sprint A3 (TCC-051): se ``plan_features`` for passado e ``llm`` for None,
+    instancia ChatOpenAI com ``plan_features.llm_model`` em vez de
+    ``settings.openai_model``. Permite Free=gpt-4o-mini, Pro/Enterprise=gpt-4o
+    sem reconfigurar settings.
 
     Args:
         inference_svc: serviço de inferência (mock CNN/ViT). Usado so quando
@@ -200,6 +211,8 @@ def build_graph(
             ChatState expandido novo, passe ``agent_state.ChatState``.
         summarize_llm: LLM dedicado pra rolling summary. Quando ``None``
             usa o mesmo ``llm`` do agente principal.
+        plan_features: PlanFeatures opcional pra escolher o LLM model dinamico
+            (Free/Pro/Enterprise). Quando None, usa ``settings.openai_model``.
 
     Returns:
         Grafo compilado pronto pra `.ainvoke()` / `.astream_events()`.
@@ -212,8 +225,11 @@ def build_graph(
         tools = _build_tools(inference_svc, action_plan_svc)
 
     if llm is None:
+        model_name = (
+            plan_features.llm_model if plan_features is not None else settings.openai_model
+        )
         llm = ChatOpenAI(
-            model=settings.openai_model,
+            model=model_name,
             api_key=settings.openai_api_key,
         )
 

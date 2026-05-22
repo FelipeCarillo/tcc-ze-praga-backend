@@ -6,6 +6,10 @@ quando o turno produz um diagnóstico, persistir o Diagnosis também.
 
 A camada de transporte (router) continua simples: parseia messages/image/session,
 delega ao service, retorna ChatResponse.
+
+Sprint A3 (TCC-051): aceita ``SubscriptionRepository`` opcional pra carregar
+``PlanFeatures`` do usuario e passar pro ``build_graph`` (escolhe LLM model
+dinamico por tier). Quando sub_repo for None, usa default settings.
 """
 
 import json
@@ -19,6 +23,7 @@ from app.domains.chat.agent import build_graph
 from app.domains.chat.repository import ChatMessageRepository, ChatSessionRepository
 from app.domains.chat.schemas import ChatResponse, CloseSessionResponse
 from app.domains.diagnoses.schemas import CreateDiagnosisRequest, DiagnosisResponse
+from app.domains.subscriptions.features import FREE_FEATURES, PlanFeatures
 
 if TYPE_CHECKING:
     from langgraph.store.base import BaseStore
@@ -26,6 +31,7 @@ if TYPE_CHECKING:
     from app.domains.action_plans.service import ActionPlanService
     from app.domains.diagnoses.service import DiagnosisService
     from app.domains.inference.service import InferenceService
+    from app.domains.subscriptions.repository import SubscriptionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +45,7 @@ class ChatService:
         action_plan_svc: "ActionPlanService",
         diagnosis_svc: "DiagnosisService",
         store_factory: Callable[[], Awaitable["BaseStore"]] | None = None,
+        sub_repo: "SubscriptionRepository | None" = None,
     ) -> None:
         self._session_repo = session_repo
         self._message_repo = message_repo
@@ -46,6 +53,19 @@ class ChatService:
         self._action_plan_svc = action_plan_svc
         self._diagnosis_svc = diagnosis_svc
         self._store_factory = store_factory
+        self._sub_repo = sub_repo
+
+    async def _resolve_plan_features(self, user_id: str) -> PlanFeatures:
+        """Carrega PlanFeatures do plano ativo. Fallback: FREE_FEATURES."""
+        if self._sub_repo is None:
+            return FREE_FEATURES
+        sub = await self._sub_repo.find_user_subscription(user_id)
+        if sub is None or sub.plan.features is None:
+            return FREE_FEATURES
+        try:
+            return PlanFeatures(**sub.plan.features)
+        except Exception:  # noqa: BLE001 — fallback resilient
+            return FREE_FEATURES
 
     async def chat(
         self,
@@ -103,7 +123,13 @@ class ChatService:
             user_id, message_text
         )
 
-        graph = build_graph(self._inference_svc, self._action_plan_svc)
+        # Sprint A3: carrega features do plano ativo pra escolher LLM model.
+        plan_features = await self._resolve_plan_features(user_id)
+        graph = build_graph(
+            self._inference_svc,
+            self._action_plan_svc,
+            plan_features=plan_features,
+        )
         result = await graph.ainvoke(
             {
                 "messages": seed_messages,
@@ -179,7 +205,12 @@ class ChatService:
                 "data": diagnosis.model_dump_json(),
             }
 
-        graph = build_graph(self._inference_svc, self._action_plan_svc)
+        plan_features = await self._resolve_plan_features(user_id)
+        graph = build_graph(
+            self._inference_svc,
+            self._action_plan_svc,
+            plan_features=plan_features,
+        )
         initial_state = {
             "messages": seed_messages,
             "current_user_id": user_id,

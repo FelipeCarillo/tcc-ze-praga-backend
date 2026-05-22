@@ -234,6 +234,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
     inference_svc=Depends(get_inference_service),
     action_plan_svc=Depends(get_action_plan_service),
     diagnosis_svc=Depends(get_diagnosis_service),
+    sub_repo=Depends(get_subscription_repository),
 ):
     from app.db.store import get_store
     from app.domains.chat.service import ChatService
@@ -245,6 +246,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
         action_plan_svc=action_plan_svc,
         diagnosis_svc=diagnosis_svc,
         store_factory=get_store,
+        sub_repo=sub_repo,
     )
 
 
