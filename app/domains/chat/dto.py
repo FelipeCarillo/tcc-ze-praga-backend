@@ -9,6 +9,7 @@ class ChatSessionDTO:
     title: str | None
     created_at: datetime
     updated_at: datetime
+    summary_text: str | None = None
 
 
 @dataclass(frozen=True)

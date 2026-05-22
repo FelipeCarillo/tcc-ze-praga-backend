@@ -4,6 +4,9 @@ Substituiu (TCC-010) o keyword-matching antigo por chamada real ao agente via
 ChatService. TCC-011 adicionou endpoint streaming /chat/stream (SSE) que reusa
 ChatService.chat_stream() — mantém /chat síncrono pra back-compat.
 
+Sprint A2.5 (TCC-048) adicionou POST /sessions/{id}/close que gera o resumo
+final da sessao e o indexa no Store.
+
 Helper _extract_last_message preserva fix do TCC-005 (parsing JSON robusto).
 """
 
@@ -15,16 +18,18 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.core.dependencies import (
     get_chat_service,
+    get_current_user,
     get_usage_service,
     require_quota,
 )
 from app.domains.auth.dto import UserDTO
-from app.domains.chat.schemas import ChatResponse
+from app.domains.chat.schemas import ChatResponse, CloseSessionResponse
 from app.domains.chat.service import ChatService
 from app.domains.usage.service import UsageService
 from app.shared.enums import FeatureTypeEnum, ModelEnum
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+sessions_router = APIRouter(prefix="/sessions", tags=["Chat"])
 
 
 def _extract_last_message(messages: str) -> str:
@@ -103,3 +108,19 @@ async def send_message_stream(
             yield {"event": event["event"], "data": data}
 
     return EventSourceResponse(_event_generator())
+
+
+@sessions_router.post(
+    "/{session_id}/close", response_model=CloseSessionResponse, status_code=200
+)
+async def close_session(
+    session_id: str,
+    current_user: UserDTO = Depends(get_current_user),
+    chat_svc: ChatService = Depends(get_chat_service),
+) -> CloseSessionResponse:
+    """Encerra a sessao gerando + persistindo um resumo da conversa.
+
+    O resumo eh salvo em ``chat_sessions.summary_text`` e tambem indexado
+    no Store sob ``("user", uid, "session_summaries")`` pra busca futura.
+    """
+    return await chat_svc.close_session(current_user.id, session_id)
