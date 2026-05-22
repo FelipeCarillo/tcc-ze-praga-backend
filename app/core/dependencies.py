@@ -114,10 +114,13 @@ def get_auth_service(
     return AuthService(repo)
 
 
-def get_user_service(repo: UserRepository = Depends(get_user_repository)):  # type: ignore[no-untyped-def]
+def get_user_service(  # type: ignore[no-untyped-def]
+    repo: UserRepository = Depends(get_user_repository),
+    sub_repo=Depends(get_subscription_repository),
+):
     from app.domains.users.service import UserService
 
-    return UserService(repo)
+    return UserService(repo, sub_repo)
 
 
 def get_subscription_service(repo=Depends(get_subscription_repository)):  # type: ignore[no-untyped-def]

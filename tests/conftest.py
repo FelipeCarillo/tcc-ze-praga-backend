@@ -49,6 +49,7 @@ def make_plan_dto(**kwargs) -> PlanDTO:
         inference_daily_limit=5,
         api_monthly_limit=0,
         is_active=True,
+        features=None,
     )
     return PlanDTO(**{**defaults, **kwargs})
 

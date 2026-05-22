@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr
 
+from app.domains.subscriptions.schemas import PlanResponse
+
 
 class UpdateUserRequest(BaseModel):
     full_name: str | None = None
@@ -15,5 +17,7 @@ class UserProfileResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # Plano + features do usuario (TCC-049) — None quando sem subscription ativa.
+    plan: PlanResponse | None = None
 
     model_config = {"from_attributes": True}

@@ -75,6 +75,7 @@ class SubscriptionRepository:
             inference_daily_limit=plan.inference_daily_limit,
             api_monthly_limit=plan.api_monthly_limit,
             is_active=plan.is_active,
+            features=plan.features,
         )
 
     @staticmethod

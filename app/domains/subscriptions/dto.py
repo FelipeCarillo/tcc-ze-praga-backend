@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -11,6 +11,7 @@ class PlanDTO:
     inference_daily_limit: int | None
     api_monthly_limit: int | None
     is_active: bool
+    features: dict | None = field(default=None)
 
 
 @dataclass(frozen=True)

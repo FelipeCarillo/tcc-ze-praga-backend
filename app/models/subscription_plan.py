@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import Boolean, Integer, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -16,6 +17,8 @@ class SubscriptionPlan(Base):
     inference_daily_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     api_monthly_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # PlanFeatures serializado (TCC-049). None = sem features definidas (legacy).
+    features: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     subscriptions: Mapped[list["UserSubscription"]] = relationship(  # type: ignore[name-defined] # noqa: F821
         back_populates="plan"
