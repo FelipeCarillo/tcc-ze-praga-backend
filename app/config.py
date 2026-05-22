@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.4-mini"
+    openai_embeddings_model: str = "text-embedding-3-small"
+    openai_embeddings_dims: int = 1536
 
     # App
     app_env: str = "development"

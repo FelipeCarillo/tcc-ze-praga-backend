@@ -27,6 +27,7 @@ from app.domains.diagnosis_graph.state import DiagnosisState
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
+    from langgraph.store.base import BaseStore
 
     from app.domains.action_plans.service import ActionPlanService
     from app.domains.diagnoses.service import DiagnosisService
@@ -37,6 +38,7 @@ def build_diagnosis_graph(
     inference_svc: InferenceService,
     action_plan_svc: ActionPlanService,
     diagnosis_svc: DiagnosisService,
+    store: BaseStore | None = None,
 ) -> CompiledStateGraph:
     """Compila o sub-grafo de diagnostico com os services injetados.
 
@@ -44,6 +46,10 @@ def build_diagnosis_graph(
         inference_svc: ``InferenceService`` ja inicializado pro crop alvo.
         action_plan_svc: lookup de planos de acao por disease_id.
         diagnosis_svc: persistencia de Diagnosis rows.
+        store: opcional ``BaseStore`` (em prod, ``AsyncPostgresStore``)
+            — quando passado, o ``persist_node`` indexa cada diagnostico
+            criado no namespace ``("user", uid, "diagnoses")`` pra busca
+            semantica via ``search_my_diagnoses`` (TCC-046).
 
     Returns:
         ``CompiledStateGraph`` pronto pra ``.ainvoke()``.
@@ -62,7 +68,8 @@ def build_diagnosis_graph(
         partial(compose_action_plan_node, action_plan_svc=action_plan_svc),
     )
     workflow.add_node(
-        "persist", partial(persist_node, diagnosis_svc=diagnosis_svc)
+        "persist",
+        partial(persist_node, diagnosis_svc=diagnosis_svc, store=store),
     )
 
     workflow.add_edge(START, "load_model")

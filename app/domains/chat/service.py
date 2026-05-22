@@ -9,20 +9,25 @@ delega ao service, retorna ChatResponse.
 """
 
 import json
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.domains.chat.agent import build_graph
 from app.domains.chat.repository import ChatMessageRepository, ChatSessionRepository
-from app.domains.chat.schemas import ChatResponse
+from app.domains.chat.schemas import ChatResponse, CloseSessionResponse
 from app.domains.diagnoses.schemas import CreateDiagnosisRequest, DiagnosisResponse
 
 if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore
+
     from app.domains.action_plans.service import ActionPlanService
     from app.domains.diagnoses.service import DiagnosisService
     from app.domains.inference.service import InferenceService
+
+logger = logging.getLogger(__name__)
 
 
 class ChatService:
@@ -33,12 +38,14 @@ class ChatService:
         inference_svc: "InferenceService",
         action_plan_svc: "ActionPlanService",
         diagnosis_svc: "DiagnosisService",
+        store_factory: Callable[[], Awaitable["BaseStore"]] | None = None,
     ) -> None:
         self._session_repo = session_repo
         self._message_repo = message_repo
         self._inference_svc = inference_svc
         self._action_plan_svc = action_plan_svc
         self._diagnosis_svc = diagnosis_svc
+        self._store_factory = store_factory
 
     async def chat(
         self,
@@ -90,6 +97,12 @@ class ChatService:
                 )
             )
 
+        # Sprint A2.5 pre-fetch: busca diagnoses passados relevantes ao
+        # conteudo da mensagem atual, alimenta o state pro LLM (e tools).
+        recent_relevant = await self._prefetch_relevant_diagnoses(
+            user_id, message_text
+        )
+
         graph = build_graph(self._inference_svc, self._action_plan_svc)
         result = await graph.ainvoke(
             {
@@ -98,6 +111,7 @@ class ChatService:
                 "image_filename": image_filename,
                 "model_id": model_id,
                 "last_diagnosis_id": diagnosis.id if diagnosis else None,
+                "recent_relevant_diagnoses": recent_relevant,
             }
         )
 
@@ -253,3 +267,121 @@ class ChatService:
                 return content
             return json.dumps(content, ensure_ascii=False, default=str)
         return str(output)
+
+    # ── Sprint A2.5: Store-backed memory ──────────────────────────────────────
+
+    async def _prefetch_relevant_diagnoses(
+        self, user_id: str, query: str, limit: int = 3
+    ) -> list[dict]:
+        """Pre-busca diagnoses passados relevantes pra o turno atual.
+
+        Best-effort: erros do Store ou ausencia de factory retornam [].
+        """
+        if not self._store_factory or not query:
+            return []
+        try:
+            store = await self._store_factory()
+            results = await store.asearch(
+                ("user", user_id, "diagnoses"),
+                query=query,
+                limit=limit,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Pre-fetch relevant diagnoses failed")
+            return []
+        return [
+            r.value if isinstance(r.value, dict) else dict(r.value)
+            for r in results
+        ]
+
+    async def close_session(
+        self,
+        user_id: str,
+        session_id: str,
+        llm: Any = None,
+    ) -> CloseSessionResponse:
+        """Fecha a sessao gerando + persistindo um resumo da conversa.
+
+        Pipeline:
+            1) busca sessao + mensagens
+            2) gera resumo via LLM (mesmo prompt do rolling summary)
+            3) persiste em ``chat_sessions.summary_text``
+            4) indexa no Store em ``("user", uid, "session_summaries")``
+
+        Args:
+            user_id: dono da sessao.
+            session_id: id da sessao a fechar.
+            llm: LLM pra gerar o resumo. Quando ``None``, usa ChatOpenAI default.
+        """
+        session = await self._session_repo.get_by_id(session_id, user_id)
+        if session is None:
+            return CloseSessionResponse(session_id=session_id, summary_text=None)
+
+        messages = await self._message_repo.list_by_session(session_id)
+        if not messages:
+            return CloseSessionResponse(
+                session_id=session_id, summary_text=None
+            )
+
+        summary_text = await self._generate_session_summary(messages, llm)
+
+        await self._session_repo.update_summary(
+            session_id, user_id, summary_text
+        )
+
+        # Indexa no Store em ('user', uid, 'session_summaries').
+        if self._store_factory and summary_text:
+            try:
+                from app.domains.chat.memory import (
+                    index_session_summary_in_store,
+                )
+
+                store = await self._store_factory()
+                await index_session_summary_in_store(
+                    store, user_id, session_id, summary_text
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to index session summary in Store"
+                )
+
+        return CloseSessionResponse(
+            session_id=session_id, summary_text=summary_text
+        )
+
+    async def _generate_session_summary(
+        self, messages: list, llm: Any = None
+    ) -> str:
+        """Roda LLM com o prompt do rolling summary para gerar o resumo final."""
+        if llm is None:
+            from langchain_openai import ChatOpenAI
+
+            from app.config import settings
+
+            llm = ChatOpenAI(
+                model=settings.openai_model,
+                api_key=settings.openai_api_key,
+            )
+
+        history = [
+            HumanMessage(content=m.content)
+            if m.role == "user"
+            else AIMessage(content=m.content)
+            for m in messages
+        ]
+        prompt = (
+            "Resuma em ate 200 palavras o conteudo desta conversa, "
+            "preservando: 1) cultivos mencionados, 2) doencas identificadas, "
+            "3) decisoes de manejo, 4) duvidas pendentes do usuario. "
+            "Use linguagem natural em portugues."
+        )
+        response = await llm.ainvoke(
+            [SystemMessage(content=prompt), *history]
+        )
+        content = getattr(response, "content", "")
+        if isinstance(content, list):
+            content = "".join(
+                p.get("text", "") if isinstance(p, dict) else str(p)
+                for p in content
+            )
+        return content.strip() if isinstance(content, str) else str(content)

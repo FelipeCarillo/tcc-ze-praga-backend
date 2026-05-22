@@ -18,11 +18,13 @@ def _make_session_orm(
     id_: str = "sess-1",
     user_id: str = "user-1",
     title: str | None = None,
+    summary_text: str | None = None,
 ):
     m = MagicMock()
     m.id = id_
     m.user_id = user_id
     m.title = title
+    m.summary_text = summary_text
     m.created_at = NOW
     m.updated_at = NOW
     return m
@@ -67,6 +69,7 @@ async def test_create_session_persists_and_returns_dto(mock_db):
         obj.id = "new-sess"
         obj.user_id = "user-1"
         obj.title = "topo"
+        obj.summary_text = None
         obj.created_at = NOW
         obj.updated_at = NOW
 
@@ -113,6 +116,7 @@ async def test_get_or_create_creates_when_session_id_missing(mock_db):
         obj.id = "fresh"
         obj.user_id = "user-1"
         obj.title = None
+        obj.summary_text = None
         obj.created_at = NOW
         obj.updated_at = NOW
 
@@ -130,6 +134,7 @@ async def test_get_or_create_creates_when_session_id_none(mock_db):
         obj.id = "fresh"
         obj.user_id = "user-1"
         obj.title = None
+        obj.summary_text = None
         obj.created_at = NOW
         obj.updated_at = NOW
 
@@ -137,6 +142,35 @@ async def test_get_or_create_creates_when_session_id_none(mock_db):
 
     dto = await repo.get_or_create_for_user("user-1", None)
     assert dto.id == "fresh"
+
+
+async def test_update_summary_persists_and_returns_dto(mock_db):
+    """TCC-048: update_summary atualiza summary_text e retorna DTO."""
+    repo = ChatSessionRepository(mock_db)
+    session = _make_session_orm()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = session
+
+    def _refresh(obj):
+        obj.summary_text = "Resumo final."
+
+    mock_db.refresh.side_effect = _refresh
+
+    dto = await repo.update_summary("sess-1", "user-1", "Resumo final.")
+
+    assert dto is not None
+    assert dto.summary_text == "Resumo final."
+    assert session.summary_text == "Resumo final."
+    mock_db.commit.assert_awaited_once()
+
+
+async def test_update_summary_returns_none_when_session_missing(mock_db):
+    repo = ChatSessionRepository(mock_db)
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+    result = await repo.update_summary("missing", "user-1", "foo")
+
+    assert result is None
+    mock_db.commit.assert_not_awaited()
 
 
 # ── ChatMessageRepository ─────────────────────────────────────────────────────

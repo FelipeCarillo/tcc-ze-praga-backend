@@ -84,6 +84,16 @@ def get_uploaded_file_repository(db: AsyncSession = Depends(get_db)):  # type: i
     return UploadedFileRepository(db)
 
 
+# ── Store (long-term memory) ──────────────────────────────────────────────────
+
+
+async def get_store_dep():  # type: ignore[no-untyped-def]
+    """Dependency-injection wrapper para o singleton ``AsyncPostgresStore``."""
+    from app.db.store import get_store
+
+    return await get_store()
+
+
 # ── Services ──────────────────────────────────────────────────────────────────
 
 
@@ -193,18 +203,23 @@ def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]
     do ``get_inference_service``). Multi-cultivo verdadeiro entra quando
     o factory carregar diseases dinamicamente por ``crop_id`` — por ora o
     closure ignora ``crop_id`` recebido e usa o svc injetado.
+
+    Em Sprint A2.5 o factory aceita ``store`` opcional pra indexar
+    diagnoses no Store; quando ``None``, fallback pra build sem store
+    (back-compat).
     """
     from app.domains.diagnosis_graph.graph import build_diagnosis_graph
 
     _cache: dict[str, object] = {}
 
-    def _factory(crop_id: str):  # type: ignore[no-untyped-def]
-        if crop_id in _cache:
-            return _cache[crop_id]
+    def _factory(crop_id: str, store=None):  # type: ignore[no-untyped-def]
+        cache_key = f"{crop_id}::{id(store) if store else 'no-store'}"
+        if cache_key in _cache:
+            return _cache[cache_key]
         graph = build_diagnosis_graph(
-            inference_svc, action_plan_svc, diagnosis_svc
+            inference_svc, action_plan_svc, diagnosis_svc, store=store
         )
-        _cache[crop_id] = graph
+        _cache[cache_key] = graph
         return graph
 
     return _factory
@@ -217,6 +232,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
     action_plan_svc=Depends(get_action_plan_service),
     diagnosis_svc=Depends(get_diagnosis_service),
 ):
+    from app.db.store import get_store
     from app.domains.chat.service import ChatService
 
     return ChatService(
@@ -225,6 +241,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
         inference_svc=inference_svc,
         action_plan_svc=action_plan_svc,
         diagnosis_svc=diagnosis_svc,
+        store_factory=get_store,
     )
 
 

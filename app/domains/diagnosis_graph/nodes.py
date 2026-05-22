@@ -11,8 +11,10 @@ Em Sprint A2 o ``run_inference_node`` ainda usa o mock de ``InferenceService.pre
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
+from app.domains.chat.memory import index_diagnosis_in_store
 from app.domains.diagnoses.schemas import (
     CreateDiagnosisRequest,
     Top3PredictionSchema,
@@ -21,9 +23,13 @@ from app.domains.diagnosis_graph.state import DiagnosisState
 from app.shared.enums import SeverityEnum
 
 if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore
+
     from app.domains.action_plans.service import ActionPlanService
     from app.domains.diagnoses.service import DiagnosisService
     from app.domains.inference.service import InferenceService
+
+logger = logging.getLogger(__name__)
 
 
 async def load_model_node(
@@ -126,8 +132,18 @@ async def persist_node(
     state: DiagnosisState,
     *,
     diagnosis_svc: DiagnosisService,
+    store: BaseStore | None = None,
 ) -> dict:
-    """Cria 1 row em ``diagnoses`` por imagem do batch."""
+    """Cria 1 row em ``diagnoses`` por imagem do batch e indexa no Store.
+
+    Args:
+        state: estado do sub-grafo (predictions populadas pelo node anterior).
+        diagnosis_svc: service de persistencia.
+        store: opcional — quando passado, cada diagnostico criado eh
+            tambem indexado em ``("user", uid, "diagnoses")`` pra busca
+            semantica futura via ``search_my_diagnoses``. Quando ``None``,
+            so persiste no DB (usado em testes / smoke).
+    """
     persisted: list[str] = []
     image_ids = state.get("image_ids", [])
     predictions = state.get("predictions", [])
@@ -160,4 +176,14 @@ async def persist_node(
         )
         diag = await diagnosis_svc.create(user_id, body)
         persisted.append(diag.id)
+
+        # Indexa no Store (best-effort — falhas nao quebram o grafo).
+        if store is not None and user_id:
+            try:
+                await index_diagnosis_in_store(store, user_id, diag)
+            except Exception:  # noqa: BLE001 — Store offline nao bloqueia diagnostico
+                logger.exception(
+                    "Failed to index diagnosis %s in Store", diag.id
+                )
+
     return {"persisted_ids": persisted}

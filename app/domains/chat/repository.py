@@ -41,6 +41,27 @@ class ChatSessionRepository:
                 return existing
         return await self.create(user_id)
 
+    async def update_summary(
+        self, session_id: str, user_id: str, summary_text: str
+    ) -> ChatSessionDTO | None:
+        """Atualiza ``summary_text`` da sessao se pertencer ao usuario.
+
+        Retorna o DTO atualizado ou ``None`` se a sessao nao for encontrada.
+        """
+        result = await self._db.execute(
+            select(ChatSession).where(
+                ChatSession.id == session_id,
+                ChatSession.user_id == user_id,
+            )
+        )
+        session = result.scalar_one_or_none()
+        if session is None:
+            return None
+        session.summary_text = summary_text
+        await self._db.commit()
+        await self._db.refresh(session)
+        return self._to_dto(session)
+
     @staticmethod
     def _to_dto(s: ChatSession) -> ChatSessionDTO:
         return ChatSessionDTO(
@@ -49,6 +70,7 @@ class ChatSessionRepository:
             title=s.title,
             created_at=s.created_at,
             updated_at=s.updated_at,
+            summary_text=s.summary_text,
         )
 
 

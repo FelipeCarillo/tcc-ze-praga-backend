@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
 from app.core.dependencies import (
@@ -5,11 +7,13 @@ from app.core.dependencies import (
     get_diagnosis_graph_factory,
     get_diagnosis_repository,
     get_diagnosis_service,
+    get_store_dep,
     get_usage_service,
     require_quota,
 )
 from app.core.exceptions import NotFoundError
 from app.domains.auth.dto import UserDTO
+from app.domains.chat.schemas import SemanticDiagnosisHit
 from app.domains.diagnoses.schemas import (
     CreateDiagnosisRequest,
     DiagnosisFilters,
@@ -21,6 +25,7 @@ from app.domains.usage.service import UsageService
 from app.shared.enums import FeatureTypeEnum, SeverityEnum
 from app.shared.pagination import PaginatedResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/diagnoses", tags=["Diagnoses"])
 
 
@@ -122,6 +127,46 @@ async def list_diagnoses(
 ) -> PaginatedResponse[DiagnosisResponse]:
     filters = DiagnosisFilters(page=page, limit=limit, severity=severity, search=search)
     return await service.list_for_user(current_user.id, filters)
+
+
+@router.get("/semantic", response_model=list[SemanticDiagnosisHit])
+async def search_diagnoses_semantic(
+    q: str = Query(..., min_length=1, description="Texto da busca semantica"),
+    limit: int = Query(default=5, ge=1, le=50),
+    current_user: UserDTO = Depends(get_current_user),
+    store=Depends(get_store_dep),
+) -> list[SemanticDiagnosisHit]:
+    """Busca semantica em diagnoses passados via Store (TCC-048).
+
+    Consulta o namespace ``("user", uid, "diagnoses")`` por similaridade
+    de embedding com o ``q``.
+    """
+    try:
+        results = await store.asearch(
+            ("user", current_user.id, "diagnoses"),
+            query=q,
+            limit=limit,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Semantic search failed for user %s", current_user.id)
+        return []
+
+    hits: list[SemanticDiagnosisHit] = []
+    for r in results:
+        value = r.value if isinstance(r.value, dict) else dict(r.value)
+        hits.append(
+            SemanticDiagnosisHit(
+                summary_text=value.get("summary_text", ""),
+                diagnosis_id=value.get("diagnosis_id", ""),
+                disease_id=value.get("disease_id"),
+                disease_name=value.get("disease_name"),
+                crop_id=value.get("crop_id"),
+                confidence=value.get("confidence"),
+                severity=value.get("severity"),
+                created_at=value.get("created_at"),
+            )
+        )
+    return hits
 
 
 @router.get("/{diagnosis_id}", response_model=DiagnosisResponse)

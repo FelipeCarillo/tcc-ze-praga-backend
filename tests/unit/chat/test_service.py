@@ -416,3 +416,200 @@ async def test_chat_stream_with_image_emits_diagnosis_event(
     assert len(diag_events) == 1
     inference_svc.predict.assert_called_once_with("ensemble", "folha.jpg")
     diagnosis_svc.create.assert_awaited_once()
+
+
+# ── TCC-048: prefetch + close_session ─────────────────────────────────────────
+
+
+@pytest.fixture
+def store_factory_fixture():
+    store = AsyncMock()
+    store.asearch = AsyncMock(return_value=[])
+    factory = AsyncMock(return_value=store)
+    return factory, store
+
+
+async def test_chat_prefetches_relevant_diagnoses_when_store_present(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+    store_factory_fixture,
+):
+    """Quando store_factory eh injetado, chat() faz prefetch + injeta no state."""
+    factory, store = store_factory_fixture
+    fake_item = MagicMock()
+    fake_item.value = {
+        "summary_text": "Ferrugem em 2025-01",
+        "diagnosis_id": "diag-old",
+    }
+    store.asearch.return_value = [fake_item]
+
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        store_factory=factory,
+    )
+
+    captured_state: dict = {}
+    graph = AsyncMock()
+
+    async def _capture(state):
+        captured_state.update(state)
+        return {"messages": [AIMessage(content="ok")]}
+
+    graph.ainvoke = _capture
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        await svc.chat(
+            user_id="user-1",
+            session_id=None,
+            message_text="ferrugem ano passado",
+            image_filename=None,
+            model_id="ensemble",
+        )
+
+    # Store.asearch foi chamado com namespace correto
+    store.asearch.assert_awaited_once()
+    call_args = store.asearch.call_args
+    assert call_args.args[0] == ("user", "user-1", "diagnoses")
+    assert call_args.kwargs["query"] == "ferrugem ano passado"
+
+    # State recebeu o resultado
+    assert "recent_relevant_diagnoses" in captured_state
+    assert len(captured_state["recent_relevant_diagnoses"]) == 1
+    assert (
+        captured_state["recent_relevant_diagnoses"][0]["diagnosis_id"]
+        == "diag-old"
+    )
+
+
+async def test_chat_prefetch_swallow_errors(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+):
+    """Erro do Store no prefetch nao quebra o chat."""
+    factory = AsyncMock()
+    factory.return_value = MagicMock()
+    factory.return_value.asearch = AsyncMock(
+        side_effect=RuntimeError("offline")
+    )
+
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        store_factory=factory,
+    )
+
+    with patch(
+        "app.domains.chat.service.build_graph",
+        return_value=_graph_returning("ok"),
+    ):
+        resp = await svc.chat(
+            user_id="user-1",
+            session_id=None,
+            message_text="oi",
+            image_filename=None,
+            model_id="ensemble",
+        )
+
+    assert resp.content == "ok"
+
+
+async def test_chat_skips_prefetch_when_no_store(chat_service):
+    """Sem store_factory, prefetch retorna [] e nao bate em nada."""
+    captured_state: dict = {}
+    graph = AsyncMock()
+
+    async def _capture(state):
+        captured_state.update(state)
+        return {"messages": [AIMessage(content="ok")]}
+
+    graph.ainvoke = _capture
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        await chat_service.chat(
+            user_id="user-1",
+            session_id=None,
+            message_text="oi",
+            image_filename=None,
+            model_id="ensemble",
+        )
+
+    assert captured_state.get("recent_relevant_diagnoses", []) == []
+
+
+async def test_close_session_generates_and_persists_summary(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+    store_factory_fixture,
+):
+    factory, store = store_factory_fixture
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        store_factory=factory,
+    )
+
+    session_repo.get_by_id.return_value = _fake_session("sess-1")
+    fake_msgs = [
+        MagicMock(role="user", content="ola"),
+        MagicMock(role="assistant", content="ola de volta"),
+    ]
+    message_repo.list_by_session.return_value = fake_msgs
+    session_repo.update_summary.return_value = _fake_session("sess-1")
+
+    fake_llm = AsyncMock()
+    fake_llm.ainvoke.return_value = AIMessage(content="Resumo: conversa breve.")
+
+    result = await svc.close_session("user-1", "sess-1", llm=fake_llm)
+
+    assert result.session_id == "sess-1"
+    assert "Resumo" in result.summary_text
+    session_repo.update_summary.assert_awaited_once()
+    update_kwargs = session_repo.update_summary.await_args
+    assert update_kwargs.args[0] == "sess-1"
+    assert update_kwargs.args[1] == "user-1"
+    # Store indexou o summary
+    store.aput.assert_awaited_once()
+    aput_kwargs = store.aput.call_args.kwargs
+    assert aput_kwargs["namespace"] == ("user", "user-1", "session_summaries")
+    assert aput_kwargs["key"] == "sess-1"
+
+
+async def test_close_session_returns_empty_when_session_missing(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+):
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+    )
+    session_repo.get_by_id.return_value = None
+
+    result = await svc.close_session("user-1", "missing-sess")
+    assert result.summary_text is None
+
+
+async def test_close_session_handles_empty_messages(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+):
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+    )
+    session_repo.get_by_id.return_value = _fake_session("sess-empty")
+    message_repo.list_by_session.return_value = []
+
+    result = await svc.close_session("user-1", "sess-empty")
+    assert result.summary_text is None
+    session_repo.update_summary.assert_not_awaited()
