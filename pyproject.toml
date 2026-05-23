@@ -23,6 +23,7 @@ dependencies = [
     "langchain-openai>=1.2.2",
     "psycopg[binary]>=3.3.4",
     "sse-starlette>=3.4.4",
+    "tavily-python>=0.7.24",
 ]
 
 [dependency-groups]

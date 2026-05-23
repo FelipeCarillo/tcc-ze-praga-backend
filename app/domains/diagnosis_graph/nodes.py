@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from app.domains.chat.memory import index_diagnosis_in_store
 from app.domains.diagnoses.schemas import (
     CreateDiagnosisRequest,
+    DiagnosisSourceSchema,
     Top3PredictionSchema,
 )
 from app.domains.diagnosis_graph.state import DiagnosisState
@@ -149,9 +150,18 @@ async def persist_node(
     predictions = state.get("predictions", [])
     model_id = state.get("model_id", "ensemble")
     user_id = state.get("user_id", "")
+    # TCC-056: evidence_per_image vem do gather_evidence_node (paralelo).
+    # Index alinhado com predictions — quando ausente, persistimos lista vazia.
+    evidence_per_image = state.get("evidence_per_image") or []
 
     for i, pred in enumerate(predictions):
         image_name = image_ids[i] if i < len(image_ids) else None
+        raw_sources = (
+            evidence_per_image[i]
+            if i < len(evidence_per_image)
+            else []
+        )
+        sources = _build_diagnosis_sources(raw_sources)
         body = CreateDiagnosisRequest(
             disease_name=pred["disease_name"],
             disease_id=pred["disease_id"],
@@ -173,6 +183,7 @@ async def persist_node(
                 )
                 for t in pred.get("top3", [])
             ],
+            sources=sources,
         )
         diag = await diagnosis_svc.create(user_id, body)
         persisted.append(diag.id)
@@ -187,3 +198,34 @@ async def persist_node(
                 )
 
     return {"persisted_ids": persisted}
+
+
+def _build_diagnosis_sources(
+    raw_sources: list[dict],
+) -> list[DiagnosisSourceSchema]:
+    """Converte evidencia bruta (gather_evidence) em DiagnosisSourceSchema.
+
+    Heuristica de classificacao de ``type``:
+    - Possui ``doi`` -> ``scientific`` (vem do SciELO).
+    - Senao -> ``web`` (vem do Tavily).
+
+    Tolera campos faltantes — items sem ``url`` ou ``title`` sao mantidos
+    com string vazia. Items que nao sao dict sao filtrados.
+    """
+    out: list[DiagnosisSourceSchema] = []
+    for raw in raw_sources or []:
+        if not isinstance(raw, dict):
+            continue
+        has_doi = bool(raw.get("doi"))
+        # Abstract eh o campo do SciELO; snippet do Tavily.
+        snippet = raw.get("snippet") or raw.get("abstract") or None
+        out.append(
+            DiagnosisSourceSchema(
+                type="scientific" if has_doi or "abstract" in raw else "web",
+                url=raw.get("url", "") or "",
+                title=raw.get("title", "") or "",
+                snippet=snippet,
+                doi=raw.get("doi") or None,
+            )
+        )
+    return out

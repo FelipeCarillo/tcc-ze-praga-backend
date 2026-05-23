@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +15,27 @@ class Top3PredictionSchema(BaseModel):
     severity: str | None = None
 
 
+class DiagnosisSourceSchema(BaseModel):
+    """Evidencia externa anexada ao diagnostico (TCC-056).
+
+    Populado pelo ``gather_evidence_node`` rodando ``search_web`` (Tavily) e/ou
+    ``search_scientific`` (SciELO) em paralelo ao ``compose_action_plan``.
+
+    Args:
+        type: ``"web"`` (Tavily) ou ``"scientific"`` (SciELO).
+        url: link pra fonte original. Sempre presente (string vazia se ausente).
+        title: titulo do artigo/pagina. String vazia se ausente.
+        snippet: trecho relevante (max 500 chars). Opcional.
+        doi: DOI quando aplicavel (so' ``scientific``). Opcional.
+    """
+
+    type: Literal["web", "scientific"]
+    url: str
+    title: str
+    snippet: str | None = None
+    doi: str | None = None
+
+
 class CreateDiagnosisRequest(BaseModel):
     disease_name: str
     disease_id: str
@@ -25,6 +47,7 @@ class CreateDiagnosisRequest(BaseModel):
     image_url: str | None = None
     image_name: str | None = None
     top3: list[Top3PredictionSchema] = Field(default_factory=list)
+    sources: list[DiagnosisSourceSchema] = Field(default_factory=list)
 
 
 class DiagnosisResponse(BaseModel):
@@ -40,6 +63,7 @@ class DiagnosisResponse(BaseModel):
     image_name: str | None
     created_at: datetime
     top3: list[Top3PredictionSchema]
+    sources: list[DiagnosisSourceSchema] = Field(default_factory=list)
 
 
 class DiagnosisFilters(BaseModel):

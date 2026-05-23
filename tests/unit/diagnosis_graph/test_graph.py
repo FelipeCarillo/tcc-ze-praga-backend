@@ -312,6 +312,107 @@ async def test_persist_node_swallows_store_errors(mock_diagnosis_svc, caplog):
     assert "Failed to index diagnosis diag-1 in Store" in caplog.text
 
 
+async def test_persist_node_writes_sources_from_evidence(mock_diagnosis_svc):
+    """TCC-056: persist_node grava state.evidence_per_image em diagnoses.sources."""
+    from app.domains.diagnosis_graph.nodes import _build_diagnosis_sources
+
+    state = {
+        "user_id": "user-uuid-1",
+        "model_id": "ensemble",
+        "image_ids": ["leaf-1.jpg"],
+        "predictions": [
+            {
+                "disease_id": "ferrugem-asiatica",
+                "disease_name": "Ferrugem Asiática",
+                "scientific_name": "Phakopsora pachyrhizi",
+                "severity": "alta",
+                "confidence": 0.91,
+                "description": None,
+                "top3": [],
+            }
+        ],
+        "evidence_per_image": [
+            [
+                {
+                    "title": "Manejo de ferrugem",
+                    "url": "https://embrapa.br/x",
+                    "snippet": "Aplicar triazol em V4",
+                },
+                {
+                    "title": "Phakopsora resistance study",
+                    "url": "https://scielo.br/y",
+                    "abstract": "Estudo de campo com isolados resistentes.",
+                    "doi": "10.1590/x",
+                },
+            ]
+        ],
+    }
+    mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
+
+    update = await persist_node(state, diagnosis_svc=mock_diagnosis_svc)
+
+    assert update["persisted_ids"] == ["diag-1"]
+    body = mock_diagnosis_svc.create.await_args_list[0].args[1]
+    # Verifica que sources foi populado com tipos corretos.
+    assert len(body.sources) == 2
+    web_src = next(s for s in body.sources if s.type == "web")
+    sci_src = next(s for s in body.sources if s.type == "scientific")
+    assert web_src.url == "https://embrapa.br/x"
+    assert sci_src.doi == "10.1590/x"
+    assert sci_src.snippet == "Estudo de campo com isolados resistentes."
+
+
+async def test_persist_node_handles_empty_evidence(mock_diagnosis_svc):
+    """Sem evidence_per_image, sources fica []."""
+    state = {
+        "user_id": "user-uuid-1",
+        "model_id": "ensemble",
+        "image_ids": ["leaf-1.jpg"],
+        "predictions": [
+            {
+                "disease_id": "ferrugem-asiatica",
+                "disease_name": "Ferrugem Asiática",
+                "scientific_name": "Phakopsora pachyrhizi",
+                "severity": "alta",
+                "confidence": 0.91,
+                "description": None,
+                "top3": [],
+            }
+        ],
+    }
+    mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
+
+    await persist_node(state, diagnosis_svc=mock_diagnosis_svc)
+    body = mock_diagnosis_svc.create.await_args_list[0].args[1]
+    assert body.sources == []
+
+
+def test_build_diagnosis_sources_classifies_web_vs_scientific() -> None:
+    """Helper classifica via presenca de doi/abstract."""
+    from app.domains.diagnosis_graph.nodes import _build_diagnosis_sources
+
+    raw = [
+        {"title": "Web", "url": "https://x", "snippet": "y"},
+        {"title": "Paper", "url": "https://p", "doi": "10.1/x"},
+        {"title": "Paper2", "url": "https://p2", "abstract": "z"},
+        "not-a-dict",  # filtrado
+        {},  # vazio mas valido (vira web)
+    ]
+    out = _build_diagnosis_sources(raw)
+    assert len(out) == 4
+    assert out[0].type == "web"
+    assert out[1].type == "scientific"  # doi presente
+    assert out[2].type == "scientific"  # abstract presente
+    assert out[3].type == "web"  # dict vazio default
+
+
+def test_build_diagnosis_sources_handles_none_input() -> None:
+    from app.domains.diagnosis_graph.nodes import _build_diagnosis_sources
+
+    assert _build_diagnosis_sources([]) == []
+    assert _build_diagnosis_sources(None) == []  # type: ignore[arg-type]
+
+
 async def test_persist_node_no_store_skips_indexing(mock_diagnosis_svc):
     """Sem store, nada acontece com indexing — back-compat."""
     state = {

@@ -115,3 +115,50 @@ def test_to_response_mapping():
     assert resp.id == dto.id
     assert resp.confidence == dto.confidence
     assert len(resp.top3) == 1
+    # TCC-056: sources default vazio quando DTO nao tem
+    assert resp.sources == []
+
+
+def test_to_response_maps_sources_from_dto():
+    """TCC-056: sources JSONB -> DiagnosisSourceSchema."""
+    dto = make_diagnosis_dto(
+        sources=[
+            {
+                "type": "web",
+                "url": "https://embrapa.br/x",
+                "title": "Manejo de ferrugem",
+                "snippet": "Aplicar triazol",
+                "doi": None,
+            },
+            {
+                "type": "scientific",
+                "url": "https://scielo.br/y",
+                "title": "Phakopsora study",
+                "snippet": "Resistance results",
+                "doi": "10.1590/x",
+            },
+        ]
+    )
+    resp = DiagnosisService._to_response(dto)
+    assert len(resp.sources) == 2
+    assert resp.sources[0].type == "web"
+    assert resp.sources[1].type == "scientific"
+    assert resp.sources[1].doi == "10.1590/x"
+
+
+def test_to_response_tolerates_malformed_sources():
+    """Sources com type invalido caem em fallback 'web'."""
+    dto = make_diagnosis_dto(
+        sources=[
+            {
+                "type": "unknown",
+                "url": "https://x",
+                "title": "T",
+            },
+            "not-a-dict",  # filtrado
+            {"url": "https://y"},  # type ausente -> fallback web
+        ]
+    )
+    resp = DiagnosisService._to_response(dto)
+    assert len(resp.sources) == 2
+    assert all(s.type == "web" for s in resp.sources)

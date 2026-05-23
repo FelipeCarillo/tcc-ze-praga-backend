@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -27,3 +28,5 @@ class DiagnosisDTO:
     image_name: str | None
     created_at: datetime
     top3: list[Top3PredictionDTO] = field(default_factory=list)
+    # TCC-056 — evidencia externa persistida em diagnoses.sources (JSONB).
+    sources: list[dict[str, Any]] = field(default_factory=list)

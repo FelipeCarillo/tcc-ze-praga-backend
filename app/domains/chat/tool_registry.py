@@ -111,6 +111,26 @@ def get_registry() -> list[ToolConfig]:
             ),
         ),
         ToolConfig(
+            name="search_web",
+            version=1,
+            factory_key="search_web",
+            enabled_globally=settings.agent_enable_search_web,
+            required_feature="search_web",
+            min_tier="pro",
+            description="Pesquisa web via Tavily (tier Pro+).",
+        ),
+        ToolConfig(
+            name="search_scientific",
+            version=1,
+            factory_key="search_scientific",
+            enabled_globally=settings.agent_enable_search_scientific,
+            required_feature="search_scientific",
+            min_tier="enterprise",
+            description=(
+                "Pesquisa literatura cientifica via SciELO (tier Enterprise)."
+            ),
+        ),
+        ToolConfig(
             name="identify_crop",
             version=2,
             factory_key="identify_crop",
