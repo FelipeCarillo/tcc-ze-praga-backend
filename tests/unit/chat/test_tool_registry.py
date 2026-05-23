@@ -58,18 +58,21 @@ def test_free_tier_explicit_same_as_default() -> None:
 def test_pro_tier_sees_base_tools() -> None:
     """Pro nao tem compare_diagnoses (Enterprise-only) — 4 tools."""
     names = get_active_tool_names({"tier_name": "pro"})
-    # base 4 tools (sem compare_diagnoses, sem search_web por feature flag)
+    # base 4 tools (sem compare_diagnoses, sem search_web/scientific por feature flag)
     assert len(names) == 4
     assert "compare_diagnoses" not in names
     assert "search_web" not in names  # requires plan_features["search_web"]=True
+    assert "search_scientific" not in names
 
 
 def test_pro_tier_with_search_web_feature_unlocks_tool() -> None:
-    """Pro com search_web=True ativa a tool."""
+    """Pro com search_web=True ativa search_web; scientific eh Enterprise-only."""
     names = get_active_tool_names(
-        {"tier_name": "pro", "search_web": True}
+        {"tier_name": "pro", "search_web": True, "search_scientific": True}
     )
     assert "search_web" in names
+    # search_scientific exige tier=enterprise
+    assert "search_scientific" not in names
 
 
 def test_enterprise_tier_unlocks_compare_diagnoses() -> None:
@@ -77,16 +80,22 @@ def test_enterprise_tier_unlocks_compare_diagnoses() -> None:
     names = get_active_tool_names({"tier_name": "enterprise"})
     assert len(names) == 5
     assert "compare_diagnoses" in names
-    # search_web ainda requer feature flag
+    # search_web/scientific ainda requerem feature flag
     assert "search_web" not in names
+    assert "search_scientific" not in names
 
 
-def test_enterprise_tier_with_search_web_feature_unlocks() -> None:
-    """Enterprise + flag ativa search_web."""
+def test_enterprise_tier_with_all_features_unlocks_search_tools() -> None:
+    """Enterprise + flags ativa search_web e search_scientific."""
     names = get_active_tool_names(
-        {"tier_name": "enterprise", "search_web": True}
+        {
+            "tier_name": "enterprise",
+            "search_web": True,
+            "search_scientific": True,
+        }
     )
     assert "search_web" in names
+    assert "search_scientific" in names
 
 
 def test_global_flag_off_skips_tool(monkeypatch) -> None:
@@ -296,8 +305,8 @@ def test_tool_config_is_frozen() -> None:
         cfg.name = "y"  # type: ignore[misc]
 
 
-def test_default_registry_has_seven_tools_post_a4() -> None:
-    """Smoke-test do registry default: 6 v1 (4 base + compare_diagnoses + search_web) + 1 v2 (identify_crop)."""
+def test_default_registry_has_eight_tools_post_a4() -> None:
+    """Smoke-test: 7 v1 (4 base + compare + search_web + search_scientific) + 1 v2 (identify_crop)."""
     cfgs = get_registry()
     assert {c.name for c in cfgs} == {
         "deep_diagnose",
@@ -306,14 +315,14 @@ def test_default_registry_has_seven_tools_post_a4() -> None:
         "search_my_diagnoses",
         "compare_diagnoses",
         "search_web",
+        "search_scientific",
         "identify_crop",
     }
-    # 6 tools v1 + 1 tool v2 (identify_crop dormente)
+    # 7 tools v1 + 1 tool v2 (identify_crop dormente)
     v1_cfgs = [c for c in cfgs if c.version == 1]
     v2_cfgs = [c for c in cfgs if c.version == 2]
-    assert len(v1_cfgs) == 6
+    assert len(v1_cfgs) == 7
     assert len(v2_cfgs) == 1
-    # Base 4 sem required_feature/min_tier; compare/search_web têm gating
     by_name = {c.name: c for c in cfgs}
     base_tools = {"deep_diagnose", "get_disease_info", "get_action_plan", "search_my_diagnoses"}
     for n in base_tools:
@@ -321,6 +330,8 @@ def test_default_registry_has_seven_tools_post_a4() -> None:
         assert by_name[n].min_tier is None
     assert by_name["search_web"].required_feature == "search_web"
     assert by_name["search_web"].min_tier == "pro"
+    assert by_name["search_scientific"].required_feature == "search_scientific"
+    assert by_name["search_scientific"].min_tier == "enterprise"
     assert by_name["compare_diagnoses"].min_tier == "enterprise"
 
 

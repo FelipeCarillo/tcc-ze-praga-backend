@@ -16,6 +16,7 @@ from app.domains.chat.tools.get_disease_info import build_get_disease_info_tool
 from app.domains.chat.tools.search_my_diagnoses import (
     build_search_my_diagnoses_tool,
 )
+from app.domains.chat.tools.search_scientific import build_search_scientific_tool
 from app.domains.chat.tools.search_web import build_search_web_tool
 
 __all__ = [
@@ -24,5 +25,6 @@ __all__ = [
     "build_get_action_plan_tool",
     "build_get_disease_info_tool",
     "build_search_my_diagnoses_tool",
+    "build_search_scientific_tool",
     "build_search_web_tool",
 ]

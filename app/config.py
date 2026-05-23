@@ -35,8 +35,9 @@ class Settings(BaseSettings):
     # Tavily (search_web tool — TCC-053)
     tavily_api_key: str | None = None
 
-    # Agent tool flags (TCC-053)
+    # Agent tool flags (TCC-053 / TCC-054)
     agent_enable_search_web: bool = True
+    agent_enable_search_scientific: bool = True
 
     # App
     app_env: str = "development"
