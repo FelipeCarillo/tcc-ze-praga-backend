@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -34,6 +36,15 @@ class Diagnosis(Base):
     model_used: Mapped[str] = mapped_column(String, nullable=False)
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
     image_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # TCC-056: evidencia externa persistida pelo gather_evidence_node (search_web +
+    # search_scientific) em paralelo ao action_plan. Schema dos items eh validado
+    # pelo ``DiagnosisSourceSchema`` em camada de aplicacao.
+    sources: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB(),
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        default=list,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

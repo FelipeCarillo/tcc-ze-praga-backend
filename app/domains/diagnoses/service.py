@@ -5,6 +5,7 @@ from app.domains.diagnoses.schemas import (
     CreateDiagnosisRequest,
     DiagnosisFilters,
     DiagnosisResponse,
+    DiagnosisSourceSchema,
     Top3PredictionSchema,
 )
 from app.shared.pagination import PaginatedResponse
@@ -70,4 +71,26 @@ class DiagnosisService:
                 )
                 for t in d.top3
             ],
+            sources=[
+                _safe_source(s) for s in d.sources if isinstance(s, dict)
+            ],
         )
+
+
+def _safe_source(raw: dict) -> DiagnosisSourceSchema:
+    """Constroi DiagnosisSourceSchema tolerando campos extras/faltantes.
+
+    JSONB do DB pode ter shape ligeiramente diferente do schema (versoes
+    antigas, dados injetados manualmente). Faz fallback pra ``type=web`` e
+    string vazia em campos obrigatorios ausentes.
+    """
+    src_type = raw.get("type")
+    if src_type not in {"web", "scientific"}:
+        src_type = "web"
+    return DiagnosisSourceSchema(
+        type=src_type,
+        url=raw.get("url", "") or "",
+        title=raw.get("title", "") or "",
+        snippet=raw.get("snippet"),
+        doi=raw.get("doi"),
+    )

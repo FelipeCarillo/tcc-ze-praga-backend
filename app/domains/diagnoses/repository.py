@@ -24,6 +24,7 @@ class DiagnosisRepository:
             model_used=data.model_used,
             image_url=data.image_url,
             image_name=data.image_name,
+            sources=[s.model_dump() for s in data.sources],
         )
         self._db.add(diagnosis)
         await self._db.flush()  # get id before adding top3
@@ -135,4 +136,5 @@ class DiagnosisRepository:
                 )
                 for t in diagnosis.top3
             ],
+            sources=list(diagnosis.sources or []),
         )
