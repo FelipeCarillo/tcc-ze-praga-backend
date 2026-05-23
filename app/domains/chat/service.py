@@ -10,6 +10,12 @@ delega ao service, retorna ChatResponse.
 Sprint A3 (TCC-051): aceita ``SubscriptionRepository`` opcional pra carregar
 ``PlanFeatures`` do usuario e passar pro ``build_graph`` (escolhe LLM model
 dinamico por tier). Quando sub_repo for None, usa default settings.
+
+Sprint A4.5 (TCC-058/059): introduz HITL via ``langgraph.interrupt()`` —
+quando uma tool dispara interrupt, o grafo pausa, o checkpointer persiste o
+snapshot, e o turno e retomado via ``Command(resume=<resposta>)`` no
+endpoint ``POST /chat/resume``. O endpoint ``GET /chat/interrupts`` lista
+threads do usuario com interrupts pendentes.
 """
 
 import json
@@ -18,14 +24,21 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.types import Command
 
 from app.domains.chat.agent import build_graph
 from app.domains.chat.repository import ChatMessageRepository, ChatSessionRepository
-from app.domains.chat.schemas import ChatResponse, CloseSessionResponse
+from app.domains.chat.schemas import (
+    ChatResponse,
+    CloseSessionResponse,
+    InterruptInfo,
+    PendingInterrupt,
+)
 from app.domains.diagnoses.schemas import CreateDiagnosisRequest, DiagnosisResponse
 from app.domains.subscriptions.features import FREE_FEATURES, PlanFeatures
 
 if TYPE_CHECKING:
+    from langgraph.checkpoint.base import BaseCheckpointSaver
     from langgraph.store.base import BaseStore
 
     from app.domains.action_plans.service import ActionPlanService
@@ -45,6 +58,9 @@ class ChatService:
         action_plan_svc: "ActionPlanService",
         diagnosis_svc: "DiagnosisService",
         store_factory: Callable[[], Awaitable["BaseStore"]] | None = None,
+        checkpointer_factory: (
+            Callable[[], Awaitable["BaseCheckpointSaver"]] | None
+        ) = None,
         sub_repo: "SubscriptionRepository | None" = None,
     ) -> None:
         self._session_repo = session_repo
@@ -53,7 +69,11 @@ class ChatService:
         self._action_plan_svc = action_plan_svc
         self._diagnosis_svc = diagnosis_svc
         self._store_factory = store_factory
+        self._checkpointer_factory = checkpointer_factory
         self._sub_repo = sub_repo
+        # Cached compiled graph por (plan_features_key) — built lazily.
+        # Chaveado por hash de plan_features pra permitir LLM-switching por tier.
+        self._graph_cache: dict[str, Any] = {}
 
     async def _resolve_plan_features(self, user_id: str) -> PlanFeatures:
         """Carrega PlanFeatures do plano ativo. Fallback: FREE_FEATURES."""
@@ -66,6 +86,39 @@ class ChatService:
             return PlanFeatures(**sub.plan.features)
         except Exception:  # noqa: BLE001 — fallback resilient
             return FREE_FEATURES
+
+    async def _get_graph(self, plan_features: PlanFeatures | None = None) -> Any:
+        """Resolve o grafo compilado lazy-init — com checkpointer + plan_features.
+
+        O checkpointer eh compartilhado entre chamadas (chat / resume /
+        interrupts list) pra garantir que snapshots persistidos sobrevivem
+        a chamadas distintas — requisito do ciclo HITL.
+
+        Cacheia por plan_features (hash da config) — assim tiers diferentes
+        usam grafos com LLM models diferentes sem rebuild a cada turno.
+        """
+        # Cache key: plan_features tier_name (default 'free').
+        tier_key = "free" if plan_features is None else plan_features.tier_name
+        if tier_key in self._graph_cache:
+            return self._graph_cache[tier_key]
+
+        checkpointer = None
+        if self._checkpointer_factory is not None:
+            try:
+                checkpointer = await self._checkpointer_factory()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Checkpointer factory failed — graph runs sem persistencia"
+                )
+
+        graph = build_graph(
+            self._inference_svc,
+            self._action_plan_svc,
+            plan_features=plan_features,
+            checkpointer=checkpointer,
+        )
+        self._graph_cache[tier_key] = graph
+        return graph
 
     async def chat(
         self,
@@ -125,11 +178,8 @@ class ChatService:
 
         # Sprint A3: carrega features do plano ativo pra escolher LLM model.
         plan_features = await self._resolve_plan_features(user_id)
-        graph = build_graph(
-            self._inference_svc,
-            self._action_plan_svc,
-            plan_features=plan_features,
-        )
+        graph = await self._get_graph(plan_features=plan_features)
+        config = {"configurable": {"thread_id": session.id}}
         result = await graph.ainvoke(
             {
                 "messages": seed_messages,
@@ -138,8 +188,23 @@ class ChatService:
                 "model_id": model_id,
                 "last_diagnosis_id": diagnosis.id if diagnosis else None,
                 "recent_relevant_diagnoses": recent_relevant,
-            }
+            },
+            config=config,
         )
+
+        # Detecta interrupt — quando o grafo pausa via ask_user, o "result"
+        # contem o payload do interrupt em vez do estado final. Ainda assim
+        # devolvemos a sessao com diagnosis (se houve) e content vazio +
+        # info do interrupt, deixando o cliente disparar /chat/resume.
+        interrupt_info = self._extract_interrupt_from_result(result)
+        if interrupt_info is not None:
+            return ChatResponse(
+                role="assistant",
+                content="",
+                diagnosis=diagnosis,
+                session_id=session.id,
+                interrupt=interrupt_info,
+            )
 
         assistant_text = self._extract_final_text(result["messages"])
 
@@ -206,11 +271,8 @@ class ChatService:
             }
 
         plan_features = await self._resolve_plan_features(user_id)
-        graph = build_graph(
-            self._inference_svc,
-            self._action_plan_svc,
-            plan_features=plan_features,
-        )
+        graph = await self._get_graph(plan_features=plan_features)
+        config = {"configurable": {"thread_id": session.id}}
         initial_state = {
             "messages": seed_messages,
             "current_user_id": user_id,
@@ -220,7 +282,9 @@ class ChatService:
         }
 
         collected_chunks: list[str] = []
-        async for event in graph.astream_events(initial_state, version="v2"):
+        async for event in graph.astream_events(
+            initial_state, version="v2", config=config
+        ):
             kind = event.get("event")
             if kind == "on_chat_model_stream":
                 chunk = event["data"].get("chunk")
@@ -235,12 +299,24 @@ class ChatService:
                 tool_text = self._tool_output_to_text(output)
                 yield {"event": "tool_result", "data": tool_text}
 
+        # Apos o streaming completar, verifica se o grafo pausou em interrupt.
+        # Quando pausou, emite evento `interrupt` em vez de persistir resposta
+        # vazia — o cliente deve renderizar dialog + chamar /chat/resume.
+        interrupt_info = await self._extract_pending_interrupt(graph, config)
+        if interrupt_info is not None:
+            yield {
+                "event": "interrupt",
+                "data": interrupt_info.model_dump(),
+            }
+            yield {"event": "done", "data": session.id}
+            return
+
         assistant_text = "".join(collected_chunks).strip()
         if not assistant_text:
             # Fallback: ChatModel pode não ter emitido tokens streamados (FakeLLM,
             # erro de streaming, etc). Recupera o final via invoke não-stream
             # como safety net pra persistir algo coerente.
-            result = await graph.ainvoke(initial_state)
+            result = await graph.ainvoke(initial_state, config=config)
             assistant_text = self._extract_final_text(result["messages"])
 
         await self._message_repo.create(
@@ -251,6 +327,254 @@ class ChatService:
         )
 
         yield {"event": "done", "data": session.id}
+
+    # ── Sprint A4.5: HITL resume + interrupts listing ─────────────────────────
+
+    async def resume(
+        self, user_id: str, thread_id: str, response: str
+    ) -> ChatResponse:
+        """Retoma uma sessao interrompida via ``Command(resume=response)``.
+
+        Args:
+            user_id: dono da sessao — usado pra validar ownership.
+            thread_id: id da sessao (= chat_session.id).
+            response: texto da resposta do usuario ao interrupt.
+
+        Returns:
+            ``ChatResponse`` com o conteudo final apos retomada. Pode
+            conter outro ``interrupt`` se o agente disparou nova pergunta.
+        """
+        session = await self._session_repo.get_by_id(thread_id, user_id=user_id)
+        if session is None:
+            return ChatResponse(
+                role="assistant",
+                content="",
+                session_id=thread_id,
+            )
+
+        plan_features = await self._resolve_plan_features(user_id)
+        graph = await self._get_graph(plan_features=plan_features)
+        config = {"configurable": {"thread_id": thread_id}}
+
+        # Persiste a resposta do usuario como ChatMessage (role=user) pra
+        # historico no DB — diferente da seed message do turno original.
+        await self._message_repo.create(
+            session_id=thread_id,
+            role="user",
+            content=response,
+            metadata={"resume": True},
+        )
+
+        result = await graph.ainvoke(Command(resume=response), config=config)
+
+        interrupt_info = self._extract_interrupt_from_result(result)
+        if interrupt_info is not None:
+            return ChatResponse(
+                role="assistant",
+                content="",
+                session_id=thread_id,
+                interrupt=interrupt_info,
+            )
+
+        assistant_text = self._extract_final_text(result["messages"])
+        await self._message_repo.create(
+            session_id=thread_id,
+            role="assistant",
+            content=assistant_text,
+        )
+        return ChatResponse(
+            role="assistant",
+            content=assistant_text,
+            session_id=thread_id,
+        )
+
+    async def resume_stream(
+        self, user_id: str, thread_id: str, response: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Variante SSE do resume — emite token/tool_call/interrupt/done."""
+        session = await self._session_repo.get_by_id(thread_id, user_id=user_id)
+        if session is None:
+            yield {"event": "done", "data": thread_id}
+            return
+
+        plan_features = await self._resolve_plan_features(user_id)
+        graph = await self._get_graph(plan_features=plan_features)
+        config = {"configurable": {"thread_id": thread_id}}
+
+        await self._message_repo.create(
+            session_id=thread_id,
+            role="user",
+            content=response,
+            metadata={"resume": True},
+        )
+
+        collected_chunks: list[str] = []
+        async for event in graph.astream_events(
+            Command(resume=response), version="v2", config=config
+        ):
+            kind = event.get("event")
+            if kind == "on_chat_model_stream":
+                chunk = event["data"].get("chunk")
+                token = getattr(chunk, "content", None) or ""
+                if token:
+                    collected_chunks.append(token)
+                    yield {"event": "token", "data": token}
+            elif kind == "on_tool_start":
+                yield {"event": "tool_call", "data": event.get("name", "")}
+            elif kind == "on_tool_end":
+                output = event["data"].get("output")
+                tool_text = self._tool_output_to_text(output)
+                yield {"event": "tool_result", "data": tool_text}
+
+        interrupt_info = await self._extract_pending_interrupt(graph, config)
+        if interrupt_info is not None:
+            yield {"event": "interrupt", "data": interrupt_info.model_dump()}
+            yield {"event": "done", "data": thread_id}
+            return
+
+        assistant_text = "".join(collected_chunks).strip()
+        if not assistant_text:
+            result = await graph.ainvoke(None, config=config)
+            assistant_text = self._extract_final_text(result["messages"])
+
+        await self._message_repo.create(
+            session_id=thread_id,
+            role="assistant",
+            content=assistant_text,
+        )
+        yield {"event": "done", "data": thread_id}
+
+    async def list_pending_interrupts(
+        self, user_id: str
+    ) -> list[PendingInterrupt]:
+        """Lista threads do user com interrupt ativo.
+
+        Itera ``chat_sessions`` do usuario; pra cada sessao, consulta o
+        snapshot do checkpointer e detecta se ha tasks com interrupts
+        pendentes. Sessoes sem snapshot persistido (ou erro de leitura)
+        sao silenciosamente puladas.
+        """
+        if self._checkpointer_factory is None:
+            return []
+
+        sessions = await self._session_repo.list_for_user(user_id)
+        plan_features = await self._resolve_plan_features(user_id)
+        graph = await self._get_graph(plan_features=plan_features)
+        pending: list[PendingInterrupt] = []
+        for sess in sessions:
+            config = {"configurable": {"thread_id": sess.id}}
+            try:
+                snapshot = await graph.aget_state(config)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to read state for session %s", sess.id
+                )
+                continue
+
+            interrupts = [
+                i for task in snapshot.tasks for i in (task.interrupts or [])
+            ]
+            if not interrupts:
+                continue
+
+            payload = interrupts[0].value
+            if not isinstance(payload, dict):
+                continue
+
+            try:
+                info = InterruptInfo(
+                    kind=payload.get("kind", "ask_user"),
+                    question=payload.get("question", ""),
+                    response_kind=payload.get("response_kind", "text"),
+                    options=payload.get("options"),
+                    asked_at=payload.get("asked_at"),
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Invalid interrupt payload for session %s", sess.id
+                )
+                continue
+
+            created_at = None
+            try:
+                created_at = (
+                    snapshot.created_at if snapshot.created_at else None
+                )
+            except Exception:  # noqa: BLE001
+                created_at = None
+
+            pending.append(
+                PendingInterrupt(
+                    session_id=sess.id,
+                    interrupt=info,
+                    created_at=created_at,
+                )
+            )
+
+        return pending
+
+    # ── Interrupt helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_interrupt_from_result(result: Any) -> InterruptInfo | None:
+        """Detecta interrupt no retorno de ``graph.ainvoke``.
+
+        Quando o grafo pausa em ``interrupt()``, o LangGraph anexa o payload
+        em ``result["__interrupt__"]`` (uma tupla de ``Interrupt``). Quando
+        nao ha interrupt, retorna ``None``.
+        """
+        if not isinstance(result, dict):
+            return None
+        raw = result.get("__interrupt__")
+        if not raw:
+            return None
+        # raw eh uma tupla de Interrupt(value=...) — pega o primeiro.
+        try:
+            first = raw[0]
+        except (IndexError, TypeError):
+            return None
+        payload = getattr(first, "value", None)
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return InterruptInfo(
+                kind=payload.get("kind", "ask_user"),
+                question=payload.get("question", ""),
+                response_kind=payload.get("response_kind", "text"),
+                options=payload.get("options"),
+                asked_at=payload.get("asked_at"),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Invalid interrupt payload from ainvoke result")
+            return None
+
+    @staticmethod
+    async def _extract_pending_interrupt(
+        graph: Any, config: dict
+    ) -> InterruptInfo | None:
+        """Consulta o snapshot pra detectar interrupt pendente apos streaming."""
+        try:
+            snapshot = await graph.aget_state(config)
+        except Exception:  # noqa: BLE001
+            return None
+        interrupts = [
+            i for task in snapshot.tasks for i in (task.interrupts or [])
+        ]
+        if not interrupts:
+            return None
+        payload = interrupts[0].value
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return InterruptInfo(
+                kind=payload.get("kind", "ask_user"),
+                question=payload.get("question", ""),
+                response_kind=payload.get("response_kind", "text"),
+                options=payload.get("options"),
+                asked_at=payload.get("asked_at"),
+            )
+        except Exception:  # noqa: BLE001
+            return None
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

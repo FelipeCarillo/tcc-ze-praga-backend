@@ -7,6 +7,11 @@ ChatService.chat_stream() — mantém /chat síncrono pra back-compat.
 Sprint A2.5 (TCC-048) adicionou POST /sessions/{id}/close que gera o resumo
 final da sessao e o indexa no Store.
 
+Sprint A4.5 (TCC-058) adicionou:
+- POST /chat/resume + /chat/resume/stream pra retomar interrupts via
+  ``Command(resume=...)``.
+- GET /chat/interrupts pra listar threads pendentes.
+
 Helper _extract_last_message preserva fix do TCC-005 (parsing JSON robusto).
 """
 
@@ -23,7 +28,12 @@ from app.core.dependencies import (
     require_quota,
 )
 from app.domains.auth.dto import UserDTO
-from app.domains.chat.schemas import ChatResponse, CloseSessionResponse
+from app.domains.chat.schemas import (
+    ChatResponse,
+    CloseSessionResponse,
+    PendingInterrupt,
+    ResumeRequest,
+)
 from app.domains.chat.service import ChatService
 from app.domains.usage.service import UsageService
 from app.shared.enums import FeatureTypeEnum, ModelEnum
@@ -108,6 +118,60 @@ async def send_message_stream(
             yield {"event": event["event"], "data": data}
 
     return EventSourceResponse(_event_generator())
+
+
+@router.post("/resume", response_model=ChatResponse, status_code=200)
+async def resume_chat(
+    body: ResumeRequest,
+    current_user: UserDTO = Depends(get_current_user),
+    chat_svc: ChatService = Depends(get_chat_service),
+) -> ChatResponse:
+    """Retoma uma sessao interrompida (HITL) via ``Command(resume=...)``.
+
+    Espera ``{thread_id, response}`` — onde ``thread_id`` eh o id da sessao
+    (= chat_session.id) e ``response`` eh a resposta do usuario ao
+    interrupt previamente disparado pela tool ``ask_user``.
+    """
+    return await chat_svc.resume(
+        user_id=current_user.id,
+        thread_id=body.thread_id,
+        response=body.response,
+    )
+
+
+@router.post("/resume/stream", status_code=200)
+async def resume_chat_stream(
+    body: ResumeRequest,
+    current_user: UserDTO = Depends(get_current_user),
+    chat_svc: ChatService = Depends(get_chat_service),
+) -> EventSourceResponse:
+    """SSE streaming do resume — yields token/tool_call/tool_result/interrupt/done."""
+
+    async def _event_generator() -> AsyncIterator[dict[str, str]]:
+        async for event in chat_svc.resume_stream(
+            user_id=current_user.id,
+            thread_id=body.thread_id,
+            response=body.response,
+        ):
+            data = event.get("data", "")
+            if not isinstance(data, str):
+                data = json.dumps(data, ensure_ascii=False, default=str)
+            yield {"event": event["event"], "data": data}
+
+    return EventSourceResponse(_event_generator())
+
+
+@router.get(
+    "/interrupts",
+    response_model=list[PendingInterrupt],
+    status_code=200,
+)
+async def list_interrupts(
+    current_user: UserDTO = Depends(get_current_user),
+    chat_svc: ChatService = Depends(get_chat_service),
+) -> list[PendingInterrupt]:
+    """Lista sessoes do usuario com interrupt pendente aguardando resposta."""
+    return await chat_svc.list_pending_interrupts(current_user.id)
 
 
 @sessions_router.post(
