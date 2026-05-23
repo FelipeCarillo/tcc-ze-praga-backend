@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     # pra liberar a tool no registry.
     agent_enable_identify_crop: bool = False
 
+    # Tavily (search_web tool — TCC-053)
+    tavily_api_key: str | None = None
+
+    # Agent tool flags (TCC-053)
+    agent_enable_search_web: bool = True
+
     # App
     app_env: str = "development"
     allowed_origins: str = "http://localhost:3000"

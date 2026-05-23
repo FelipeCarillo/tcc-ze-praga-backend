@@ -58,15 +58,35 @@ def test_free_tier_explicit_same_as_default() -> None:
 def test_pro_tier_sees_base_tools() -> None:
     """Pro nao tem compare_diagnoses (Enterprise-only) — 4 tools."""
     names = get_active_tool_names({"tier_name": "pro"})
+    # base 4 tools (sem compare_diagnoses, sem search_web por feature flag)
     assert len(names) == 4
     assert "compare_diagnoses" not in names
+    assert "search_web" not in names  # requires plan_features["search_web"]=True
+
+
+def test_pro_tier_with_search_web_feature_unlocks_tool() -> None:
+    """Pro com search_web=True ativa a tool."""
+    names = get_active_tool_names(
+        {"tier_name": "pro", "search_web": True}
+    )
+    assert "search_web" in names
 
 
 def test_enterprise_tier_unlocks_compare_diagnoses() -> None:
-    """Enterprise vê todas as 4 base + compare_diagnoses."""
+    """Enterprise vê todas as 4 base + compare_diagnoses (sem features)."""
     names = get_active_tool_names({"tier_name": "enterprise"})
     assert len(names) == 5
     assert "compare_diagnoses" in names
+    # search_web ainda requer feature flag
+    assert "search_web" not in names
+
+
+def test_enterprise_tier_with_search_web_feature_unlocks() -> None:
+    """Enterprise + flag ativa search_web."""
+    names = get_active_tool_names(
+        {"tier_name": "enterprise", "search_web": True}
+    )
+    assert "search_web" in names
 
 
 def test_global_flag_off_skips_tool(monkeypatch) -> None:
@@ -276,8 +296,8 @@ def test_tool_config_is_frozen() -> None:
         cfg.name = "y"  # type: ignore[misc]
 
 
-def test_default_registry_has_six_tools_post_v2_dormant() -> None:
-    """Smoke-test: 5 v1 (4 base + compare_diagnoses) + 1 v2 (identify_crop, dormante)."""
+def test_default_registry_has_seven_tools_post_a4() -> None:
+    """Smoke-test do registry default: 6 v1 (4 base + compare_diagnoses + search_web) + 1 v2 (identify_crop)."""
     cfgs = get_registry()
     assert {c.name for c in cfgs} == {
         "deep_diagnose",
@@ -285,20 +305,23 @@ def test_default_registry_has_six_tools_post_v2_dormant() -> None:
         "get_action_plan",
         "search_my_diagnoses",
         "compare_diagnoses",
+        "search_web",
         "identify_crop",
     }
-    # 5 tools v1 + 1 tool v2 (identify_crop dormente)
+    # 6 tools v1 + 1 tool v2 (identify_crop dormente)
     v1_cfgs = [c for c in cfgs if c.version == 1]
     v2_cfgs = [c for c in cfgs if c.version == 2]
-    assert len(v1_cfgs) == 5
+    assert len(v1_cfgs) == 6
     assert len(v2_cfgs) == 1
-    # Tools v1 base sem gating (excluindo compare_diagnoses que tem min_tier)
+    # Base 4 sem required_feature/min_tier; compare/search_web têm gating
+    by_name = {c.name: c for c in cfgs}
     base_tools = {"deep_diagnose", "get_disease_info", "get_action_plan", "search_my_diagnoses"}
-    for c in v1_cfgs:
-        if c.name in base_tools:
-            assert c.enabled_globally is True
-            assert c.required_feature is None
-            assert c.min_tier is None
+    for n in base_tools:
+        assert by_name[n].required_feature is None
+        assert by_name[n].min_tier is None
+    assert by_name["search_web"].required_feature == "search_web"
+    assert by_name["search_web"].min_tier == "pro"
+    assert by_name["compare_diagnoses"].min_tier == "enterprise"
 
 
 def test_compare_diagnoses_gated_for_enterprise_only() -> None:
