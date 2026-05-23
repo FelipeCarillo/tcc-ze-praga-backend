@@ -1,12 +1,12 @@
 """add sources JSONB column to diagnoses (TCC-056)
 
-Revision ID: 0007_add_sources_to_diagnoses
-Revises: 0005_add_plan_features, 0006_add_summary_to_chat_sessions
+Revision ID: 0008_add_sources_to_diagnoses
+Revises: 0007_add_api_keys
 Create Date: 2026-05-23 16:00:00.000000
 
 Strategy:
-- Merge das duas heads (0005_add_plan_features + 0006_add_summary_to_chat_sessions)
-  pra resolver branch divergente.
+- Linear depois de 0007_add_api_keys (que ja' fez merge das heads
+  pgvector+plan_features+chat_summary).
 - Add ``sources`` JSONB column nullable com default ``[]`` em ``diagnoses``.
 - Existing rows recebem ``'[]'::jsonb`` via server_default no Postgres.
 - Schema do payload eh validado em camada de aplicacao
@@ -31,7 +31,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 # revision identifiers, used by Alembic.
-revision: str = "0007_add_sources_to_diagnoses"
+revision: str = "0008_add_sources_to_diagnoses"
 down_revision: str | Sequence[str] | None = (
     "0005_add_plan_features",
     "0006_add_summary_to_chat_sessions",
