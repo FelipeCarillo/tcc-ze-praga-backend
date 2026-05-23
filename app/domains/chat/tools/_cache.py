@@ -21,7 +21,7 @@ Notas:
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 _CACHE: dict[str, tuple[datetime, Any]] = {}
@@ -50,7 +50,7 @@ def get_cached(key: str) -> Any | None:
     if entry is None:
         return None
     ts, value = entry
-    if datetime.now(timezone.utc) - ts >= _TTL:
+    if datetime.now(UTC) - ts >= _TTL:
         del _CACHE[key]
         return None
     return value
@@ -58,7 +58,7 @@ def get_cached(key: str) -> Any | None:
 
 def set_cached(key: str, value: Any) -> None:
     """Guarda valor com timestamp atual (UTC)."""
-    _CACHE[key] = (datetime.now(timezone.utc), value)
+    _CACHE[key] = (datetime.now(UTC), value)
 
 
 def clear_cache() -> None:
