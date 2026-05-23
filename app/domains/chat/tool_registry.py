@@ -100,6 +100,17 @@ def get_registry() -> list[ToolConfig]:
             ),
         ),
         ToolConfig(
+            name="ask_user",
+            version=1,
+            factory_key="ask_user",
+            enabled_globally=settings.agent_enable_ask_user,
+            required_feature=None,
+            min_tier=None,
+            description=(
+                "Pergunta direta ao usuario via interrupt (human-in-the-loop)."
+            ),
+        ),
+        ToolConfig(
             name="compare_diagnoses",
             version=1,
             factory_key="compare_diagnoses",
