@@ -4,9 +4,11 @@ from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import UnauthorizedError
+from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.security import decode_access_token
 from app.db.database import AsyncSessionLocal
+from app.domains.auth.api_key_repository import ApiKeyRepository
+from app.domains.auth.api_key_service import ApiKeyService
 from app.domains.auth.dto import UserDTO
 from app.domains.auth.repository import UserRepository
 from app.domains.auth.service import AuthService
@@ -112,6 +114,16 @@ def get_auth_service(
     repo: UserRepository = Depends(get_user_repository),
 ) -> AuthService:
     return AuthService(repo)
+
+
+def get_api_key_repository(db: AsyncSession = Depends(get_db)) -> ApiKeyRepository:
+    return ApiKeyRepository(db)
+
+
+def get_api_key_service(
+    repo: ApiKeyRepository = Depends(get_api_key_repository),
+) -> ApiKeyService:
+    return ApiKeyService(repo)
 
 
 def get_user_service(  # type: ignore[no-untyped-def]
@@ -276,3 +288,31 @@ def require_quota(feature: FeatureTypeEnum):  # type: ignore[no-untyped-def]
         return current_user
 
     return _dependency
+
+
+# ── Tier ──────────────────────────────────────────────────────────────────────
+
+
+async def require_tier_enterprise(  # type: ignore[no-untyped-def]
+    current_user: UserDTO = Depends(get_current_user),
+    sub_repo=Depends(get_subscription_repository),
+) -> UserDTO:
+    """Permite acesso apenas a usuarios com plano Enterprise (api_access=True).
+
+    Checa pela feature flag ``api_access`` no JSON ``features`` do plano —
+    fallback pra tier_name == 'enterprise' quando features for None.
+    """
+    sub = await sub_repo.find_user_subscription(current_user.id)
+    if not sub:
+        raise ForbiddenError("API keys disponiveis apenas no plano Enterprise")
+
+    features = sub.plan.features or {}
+    api_access = features.get("api_access") if isinstance(features, dict) else False
+    if api_access:
+        return current_user
+
+    # Fallback pre-features (em testes/seeds antigos): aceita pelo nome.
+    if sub.plan.name == "enterprise":
+        return current_user
+
+    raise ForbiddenError("API keys disponiveis apenas no plano Enterprise")
