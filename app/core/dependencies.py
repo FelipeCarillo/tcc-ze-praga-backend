@@ -114,10 +114,13 @@ def get_auth_service(
     return AuthService(repo)
 
 
-def get_user_service(repo: UserRepository = Depends(get_user_repository)):  # type: ignore[no-untyped-def]
+def get_user_service(  # type: ignore[no-untyped-def]
+    repo: UserRepository = Depends(get_user_repository),
+    sub_repo=Depends(get_subscription_repository),
+):
     from app.domains.users.service import UserService
 
-    return UserService(repo)
+    return UserService(repo, sub_repo)
 
 
 def get_subscription_service(repo=Depends(get_subscription_repository)):  # type: ignore[no-untyped-def]
@@ -231,6 +234,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
     inference_svc=Depends(get_inference_service),
     action_plan_svc=Depends(get_action_plan_service),
     diagnosis_svc=Depends(get_diagnosis_service),
+    sub_repo=Depends(get_subscription_repository),
 ):
     from app.db.store import get_store
     from app.domains.chat.service import ChatService
@@ -242,6 +246,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
         action_plan_svc=action_plan_svc,
         diagnosis_svc=diagnosis_svc,
         store_factory=get_store,
+        sub_repo=sub_repo,
     )
 
 

@@ -1,4 +1,4 @@
-"""Estado do chatbot_graph + helpers de InjectedState (Sprint A2).
+"""Estado do chatbot_graph + helpers de InjectedState (Sprint A2 / A3).
 
 Este modulo introduz uma versao expandida do ChatState pra suportar o padrao
 InjectedState do LangGraph 0.2+ (Annotated[ChatState, InjectedState]) — as
@@ -9,9 +9,9 @@ UploadedFileDTO eh o subset relevante do modelo UploadedFile pro turno atual:
 quando o usuario envia 1+ imagens junto da mensagem, elas chegam aqui ja com
 ids estaveis. As tools podem resolver por id via ``resolve_image``.
 
-Observacao: o ``ChatState`` original em ``agent.py`` permanece intacto neste
-ticket — o refactor pro novo padrao acontece em TCC-041 quando as tools sao
-migradas.
+Sprint A3 (TCC-051) adiciona ``plan_features`` ao state — PlanFeatures do
+plano ativo, consumido pelas tools pra filtrar comportamento (ex: niveis
+permitidos no ``get_action_plan``).
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
+
+from app.domains.subscriptions.features import PlanFeatures
 
 
 @dataclass
@@ -68,6 +70,10 @@ class ChatState(TypedDict, total=False):
     selected_model: str  # ex: "ensemble" (NAO escolhido pelo LLM)
     detected_crop_id: str | None  # set por identify_crop V2 ou prefs
     preferred_action_level: str  # "essencial" | "campo" | "especialista"
+
+    # features do plano ativo (Sprint A3 / TCC-051)
+    # PlanFeatures contem llm_model, action_plan_levels permitidos, etc.
+    plan_features: PlanFeatures
 
     # contexto recuperado (Store / DB) — populado em Sprint A2.5
     recent_relevant_diagnoses: list[dict]

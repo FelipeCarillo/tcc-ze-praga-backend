@@ -7,7 +7,7 @@ import pytest
 from app.core.exceptions import ConflictError, NotFoundError
 from app.domains.users.schemas import UpdateUserRequest
 from app.domains.users.service import UserService
-from tests.conftest import make_user_dto
+from tests.conftest import make_plan_dto, make_subscription_dto, make_user_dto
 
 
 @pytest.fixture
@@ -96,3 +96,52 @@ def test_to_profile_mapping():
     assert result.id == user.id
     assert result.full_name is None
     assert result.is_active is True
+
+
+# ── plan resolution (TCC-049) ────────────────────────────────────────────────
+
+
+async def test_get_profile_without_sub_repo_has_no_plan(user_repo):
+    """Quando sub_repo nao eh injetado, profile.plan deve ser None."""
+    svc = UserService(user_repo, sub_repo=None)
+    result = await svc.get_profile("user-uuid-1")
+    assert result.plan is None
+
+
+async def test_get_profile_without_active_subscription_has_no_plan(user_repo):
+    """Usuario sem subscription ativa -> plan=None."""
+    sub_repo = AsyncMock()
+    sub_repo.find_user_subscription = AsyncMock(return_value=None)
+    svc = UserService(user_repo, sub_repo=sub_repo)
+    result = await svc.get_profile("user-uuid-1")
+    assert result.plan is None
+
+
+async def test_get_profile_with_subscription_includes_plan_features(user_repo):
+    """Profile retorna plan.features quando subscription ativa existe."""
+    features_dict = {"tier_name": "pro", "llm_model": "gpt-4o", "search_web": True}
+    plan = make_plan_dto(name="pro", features=features_dict)
+    sub = make_subscription_dto(plan=plan)
+    sub_repo = AsyncMock()
+    sub_repo.find_user_subscription = AsyncMock(return_value=sub)
+
+    svc = UserService(user_repo, sub_repo=sub_repo)
+    result = await svc.get_profile("user-uuid-1")
+    assert result.plan is not None
+    assert result.plan.name == "pro"
+    assert result.plan.features == features_dict
+
+
+async def test_update_profile_includes_plan_features(user_repo):
+    features_dict = {"tier_name": "free", "llm_model": "gpt-4o-mini"}
+    plan = make_plan_dto(features=features_dict)
+    sub = make_subscription_dto(plan=plan)
+    sub_repo = AsyncMock()
+    sub_repo.find_user_subscription = AsyncMock(return_value=sub)
+
+    svc = UserService(user_repo, sub_repo=sub_repo)
+    result = await svc.update_profile(
+        "user-uuid-1", UpdateUserRequest(full_name="Updated Name")
+    )
+    assert result.plan is not None
+    assert result.plan.features == features_dict

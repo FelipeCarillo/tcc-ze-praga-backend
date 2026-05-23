@@ -97,6 +97,17 @@ def get_registry() -> list[ToolConfig]:
                 "Busca diagnosticos passados (sera semantico em A2.5)."
             ),
         ),
+        ToolConfig(
+            name="compare_diagnoses",
+            version=1,
+            factory_key="compare_diagnoses",
+            enabled_globally=True,
+            required_feature=None,
+            min_tier="enterprise",
+            description=(
+                "Compara multiplos modelos na mesma imagem (Enterprise)."
+            ),
+        ),
     ]
 
 

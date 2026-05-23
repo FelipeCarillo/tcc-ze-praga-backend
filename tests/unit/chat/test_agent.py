@@ -399,3 +399,74 @@ async def test_graph_with_default_chatopenai(mock_inference_svc, mock_action_pla
 
     assert "model" in sentinel_calls["init_kwargs"]
     assert result["messages"][-1].content == "fallback"
+
+
+# ── TCC-051: LLM model switching por plan_features ──────────────────────────
+
+
+async def test_graph_uses_free_llm_model_when_plan_is_free(
+    mock_inference_svc, mock_action_plan_svc, monkeypatch
+):
+    from app.domains.chat import agent as agent_mod
+    from app.domains.subscriptions.features import FREE_FEATURES
+
+    sentinel_calls = {}
+
+    class _SentinelLLM:
+        def __init__(self, **kwargs):
+            sentinel_calls["init_kwargs"] = kwargs
+
+        def bind_tools(self, tools):
+            return FakeToolLLM(responses=[AIMessage(content="ok")])
+
+    monkeypatch.setattr(agent_mod, "ChatOpenAI", _SentinelLLM)
+
+    build_graph(
+        mock_inference_svc, mock_action_plan_svc, plan_features=FREE_FEATURES
+    )
+    assert sentinel_calls["init_kwargs"]["model"] == "gpt-4o-mini"
+
+
+async def test_graph_uses_pro_llm_model_when_plan_is_pro(
+    mock_inference_svc, mock_action_plan_svc, monkeypatch
+):
+    from app.domains.chat import agent as agent_mod
+    from app.domains.subscriptions.features import PRO_FEATURES
+
+    sentinel_calls = {}
+
+    class _SentinelLLM:
+        def __init__(self, **kwargs):
+            sentinel_calls["init_kwargs"] = kwargs
+
+        def bind_tools(self, tools):
+            return FakeToolLLM(responses=[AIMessage(content="ok")])
+
+    monkeypatch.setattr(agent_mod, "ChatOpenAI", _SentinelLLM)
+
+    build_graph(
+        mock_inference_svc, mock_action_plan_svc, plan_features=PRO_FEATURES
+    )
+    assert sentinel_calls["init_kwargs"]["model"] == "gpt-4o"
+
+
+async def test_graph_falls_back_to_settings_when_no_plan_features(
+    mock_inference_svc, mock_action_plan_svc, monkeypatch
+):
+    """Sem plan_features, usa settings.openai_model (back-compat)."""
+    from app.domains.chat import agent as agent_mod
+
+    sentinel_calls = {}
+
+    class _SentinelLLM:
+        def __init__(self, **kwargs):
+            sentinel_calls["init_kwargs"] = kwargs
+
+        def bind_tools(self, tools):
+            return FakeToolLLM(responses=[AIMessage(content="ok")])
+
+    monkeypatch.setattr(agent_mod, "ChatOpenAI", _SentinelLLM)
+
+    build_graph(mock_inference_svc, mock_action_plan_svc, plan_features=None)
+    # Deve usar o valor do settings (que e' gpt-5.4-mini conforme config.py)
+    assert sentinel_calls["init_kwargs"]["model"] is not None

@@ -37,6 +37,7 @@ class SubscriptionService:
             chat_daily_limit=plan.chat_daily_limit,
             inference_daily_limit=plan.inference_daily_limit,
             api_monthly_limit=plan.api_monthly_limit,
+            features=plan.features,
         )
 
     @staticmethod
