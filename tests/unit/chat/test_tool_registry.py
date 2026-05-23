@@ -22,27 +22,26 @@ def _dummy_tool() -> str:
     return "ok"
 
 
+_BASE_TOOL_NAMES = [
+    "deep_diagnose",
+    "get_disease_info",
+    "get_action_plan",
+    "search_my_diagnoses",
+    "ask_user",
+]
+
+
 def _factories() -> dict[str, callable]:
-    return {
-        "deep_diagnose": lambda: _dummy_tool,
-        "get_disease_info": lambda: _dummy_tool,
-        "get_action_plan": lambda: _dummy_tool,
-        "search_my_diagnoses": lambda: _dummy_tool,
-    }
+    return {name: lambda: _dummy_tool for name in _BASE_TOOL_NAMES}
 
 
 # ── get_active_tool_names ─────────────────────────────────────────────────────
 
 
 def test_default_tier_sees_all_basic_tools() -> None:
-    """Free tier sem features ativa todas as 4 tools base (compare_diagnoses fica fora)."""
+    """Free tier sem features ativa todas as tools base (compare_diagnoses fica fora)."""
     names = get_active_tool_names({})
-    assert names == [
-        "deep_diagnose",
-        "get_disease_info",
-        "get_action_plan",
-        "search_my_diagnoses",
-    ]
+    assert names == _BASE_TOOL_NAMES
 
 
 def test_none_plan_features_treated_as_free() -> None:
@@ -56,10 +55,9 @@ def test_free_tier_explicit_same_as_default() -> None:
 
 
 def test_pro_tier_sees_base_tools() -> None:
-    """Pro nao tem compare_diagnoses (Enterprise-only) — 4 tools."""
+    """Pro nao tem compare_diagnoses (Enterprise-only) — apenas base tools."""
     names = get_active_tool_names({"tier_name": "pro"})
-    # base 4 tools (sem compare_diagnoses, sem search_web/scientific por feature flag)
-    assert len(names) == 4
+    assert len(names) == len(_BASE_TOOL_NAMES)
     assert "compare_diagnoses" not in names
     assert "search_web" not in names  # requires plan_features["search_web"]=True
     assert "search_scientific" not in names
@@ -76,9 +74,9 @@ def test_pro_tier_with_search_web_feature_unlocks_tool() -> None:
 
 
 def test_enterprise_tier_unlocks_compare_diagnoses() -> None:
-    """Enterprise vê todas as 4 base + compare_diagnoses (sem features)."""
+    """Enterprise vê todas as base + compare_diagnoses."""
     names = get_active_tool_names({"tier_name": "enterprise"})
-    assert len(names) == 5
+    assert len(names) == len(_BASE_TOOL_NAMES) + 1
     assert "compare_diagnoses" in names
     # search_web/scientific ainda requerem feature flag
     assert "search_web" not in names
@@ -211,8 +209,8 @@ def test_combined_gates_all_must_pass(monkeypatch) -> None:
 def test_unknown_tier_treated_as_free() -> None:
     """Tier name desconhecido cai em level 0 (free)."""
     names = get_active_tool_names({"tier_name": "wakanda"})
-    # 4 tools base sao todas min_tier=None entao saem ok
-    assert len(names) == 4
+    # Todas as tools base sao min_tier=None entao saem ok
+    assert len(names) == len(_BASE_TOOL_NAMES)
 
 
 # ── build_tools ───────────────────────────────────────────────────────────────
@@ -228,23 +226,10 @@ def test_build_tools_invokes_factories_in_order() -> None:
 
         return _factory
 
-    factories = {
-        n: _track(n)
-        for n in (
-            "deep_diagnose",
-            "get_disease_info",
-            "get_action_plan",
-            "search_my_diagnoses",
-        )
-    }
+    factories = {n: _track(n) for n in _BASE_TOOL_NAMES}
     tools = build_tools(factories)
-    assert len(tools) == 4
-    assert calls == [
-        "deep_diagnose",
-        "get_disease_info",
-        "get_action_plan",
-        "search_my_diagnoses",
-    ]
+    assert len(tools) == len(_BASE_TOOL_NAMES)
+    assert calls == _BASE_TOOL_NAMES
 
 
 def test_build_tools_skips_missing_factory() -> None:
@@ -305,23 +290,23 @@ def test_tool_config_is_frozen() -> None:
         cfg.name = "y"  # type: ignore[misc]
 
 
-def test_default_registry_has_eight_tools_post_a4() -> None:
-    """Smoke-test: 7 v1 (4 base + compare + search_web + search_scientific) + 1 v2 (identify_crop)."""
+def test_default_registry_has_all_tools_post_a4_a4_5() -> None:
+    """Smoke-test: 8 v1 (5 base + compare + search_web + search_scientific) + 1 v2 (identify_crop)."""
     cfgs = get_registry()
     assert {c.name for c in cfgs} == {
         "deep_diagnose",
         "get_disease_info",
         "get_action_plan",
         "search_my_diagnoses",
+        "ask_user",
         "compare_diagnoses",
         "search_web",
         "search_scientific",
         "identify_crop",
     }
-    # 7 tools v1 + 1 tool v2 (identify_crop dormente)
     v1_cfgs = [c for c in cfgs if c.version == 1]
     v2_cfgs = [c for c in cfgs if c.version == 2]
-    assert len(v1_cfgs) == 7
+    assert len(v1_cfgs) == 8
     assert len(v2_cfgs) == 1
     by_name = {c.name: c for c in cfgs}
     base_tools = {"deep_diagnose", "get_disease_info", "get_action_plan", "search_my_diagnoses"}

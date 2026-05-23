@@ -173,6 +173,25 @@ async def test_update_summary_returns_none_when_session_missing(mock_db):
     mock_db.commit.assert_not_awaited()
 
 
+async def test_list_for_user_returns_dtos(mock_db):
+    """TCC-058: list_for_user retorna sessoes ordenadas por updated_at desc."""
+    repo = ChatSessionRepository(mock_db)
+    s1 = _make_session_orm(id_="sess-A", user_id="user-1")
+    s2 = _make_session_orm(id_="sess-B", user_id="user-1")
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [s1, s2]
+
+    items = await repo.list_for_user("user-1")
+    assert len(items) == 2
+    assert items[0].id == "sess-A"
+    assert items[1].id == "sess-B"
+
+
+async def test_list_for_user_empty(mock_db):
+    repo = ChatSessionRepository(mock_db)
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+    assert await repo.list_for_user("user-1") == []
+
+
 # ── ChatMessageRepository ─────────────────────────────────────────────────────
 
 

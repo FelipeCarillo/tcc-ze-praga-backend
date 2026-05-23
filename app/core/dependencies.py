@@ -96,6 +96,16 @@ async def get_store_dep():  # type: ignore[no-untyped-def]
     return await get_store()
 
 
+# ── Checkpointer (HITL — TCC-058) ─────────────────────────────────────────────
+
+
+async def get_checkpointer_dep():  # type: ignore[no-untyped-def]
+    """Dependency-injection wrapper para o singleton ``AsyncPostgresSaver``."""
+    from app.db.checkpointer import get_checkpointer
+
+    return await get_checkpointer()
+
+
 # ── Services ──────────────────────────────────────────────────────────────────
 
 
@@ -248,6 +258,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
     diagnosis_svc=Depends(get_diagnosis_service),
     sub_repo=Depends(get_subscription_repository),
 ):
+    from app.db.checkpointer import get_checkpointer
     from app.db.store import get_store
     from app.domains.chat.service import ChatService
 
@@ -258,6 +269,7 @@ def get_chat_service(  # type: ignore[no-untyped-def]
         action_plan_svc=action_plan_svc,
         diagnosis_svc=diagnosis_svc,
         store_factory=get_store,
+        checkpointer_factory=get_checkpointer,
         sub_repo=sub_repo,
     )
 

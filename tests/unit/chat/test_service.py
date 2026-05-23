@@ -565,7 +565,7 @@ async def test_chat_prefetches_relevant_diagnoses_when_store_present(
     captured_state: dict = {}
     graph = AsyncMock()
 
-    async def _capture(state):
+    async def _capture(state, config=None):
         captured_state.update(state)
         return {"messages": [AIMessage(content="ok")]}
 
@@ -634,7 +634,7 @@ async def test_chat_skips_prefetch_when_no_store(chat_service):
     captured_state: dict = {}
     graph = AsyncMock()
 
-    async def _capture(state):
+    async def _capture(state, config=None):
         captured_state.update(state)
         return {"messages": [AIMessage(content="ok")]}
 
@@ -724,3 +724,289 @@ async def test_close_session_handles_empty_messages(
     result = await svc.close_session("user-1", "sess-empty")
     assert result.summary_text is None
     session_repo.update_summary.assert_not_awaited()
+
+
+# ── Sprint A4.5: resume + interrupts (TCC-058) ───────────────────────────────
+
+
+def _interrupt_obj(value: dict):
+    """Cria um stub que simula ``langgraph.types.Interrupt`` com ``.value``."""
+    obj = MagicMock()
+    obj.value = value
+    return obj
+
+
+def _snapshot_with_interrupts(payload: dict | None, created_at=None):
+    """Cria mock de StateSnapshot com tasks/interrupts populados."""
+    snap = MagicMock()
+    if payload is None:
+        snap.tasks = []
+    else:
+        task = MagicMock()
+        task.interrupts = [_interrupt_obj(payload)]
+        snap.tasks = [task]
+    snap.created_at = created_at
+    return snap
+
+
+async def test_extract_interrupt_from_result_returns_info():
+    """Resultado com __interrupt__ deve virar InterruptInfo."""
+    raw = {
+        "__interrupt__": (
+            _interrupt_obj(
+                {
+                    "kind": "ask_user",
+                    "question": "Qual cultivo?",
+                    "response_kind": "choice",
+                    "options": ["soja", "milho"],
+                    "asked_at": "2026-05-22T10:00:00+00:00",
+                }
+            ),
+        )
+    }
+    info = ChatService._extract_interrupt_from_result(raw)
+    assert info is not None
+    assert info.question == "Qual cultivo?"
+    assert info.response_kind == "choice"
+    assert info.options == ["soja", "milho"]
+
+
+async def test_extract_interrupt_from_result_returns_none_when_absent():
+    assert ChatService._extract_interrupt_from_result({"messages": []}) is None
+    assert ChatService._extract_interrupt_from_result(None) is None
+    assert (
+        ChatService._extract_interrupt_from_result(
+            {"__interrupt__": ()}
+        )
+        is None
+    )
+
+
+async def test_chat_returns_interrupt_when_graph_pauses(
+    chat_service, message_repo
+):
+    """chat() retorna ChatResponse com interrupt=info quando grafo pausa."""
+    graph = AsyncMock()
+    graph.ainvoke = AsyncMock(
+        return_value={
+            "messages": [],
+            "__interrupt__": (
+                _interrupt_obj(
+                    {
+                        "kind": "ask_user",
+                        "question": "Confirma?",
+                        "response_kind": "boolean",
+                    }
+                ),
+            ),
+        }
+    )
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        resp = await chat_service.chat(
+            user_id="user-1",
+            session_id=None,
+            message_text="hi",
+            image_filename=None,
+            model_id="ensemble",
+        )
+
+    assert resp.interrupt is not None
+    assert resp.interrupt.question == "Confirma?"
+    assert resp.content == ""
+    # Apenas user msg foi persistida — assistant nao (esta esperando resume)
+    assert message_repo.create.await_count == 1
+
+
+async def test_resume_invokes_command_resume(chat_service, session_repo, message_repo):
+    """resume() chama graph.ainvoke(Command(resume=resposta)) e persiste msgs."""
+    from langgraph.types import Command
+
+    session_repo.get_by_id.return_value = _fake_session("sess-1")
+    captured: list = []
+
+    async def _capture(payload, config=None):
+        captured.append(payload)
+        return {"messages": [AIMessage(content="ok apos resume")]}
+
+    graph = AsyncMock()
+    graph.ainvoke = _capture
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        resp = await chat_service.resume("user-1", "sess-1", "soja")
+
+    assert resp.content == "ok apos resume"
+    assert resp.session_id == "sess-1"
+    assert captured
+    assert isinstance(captured[0], Command)
+    # User resume msg + assistant final
+    assert message_repo.create.await_count == 2
+    user_call = message_repo.create.await_args_list[0]
+    assert user_call.kwargs["content"] == "soja"
+    assert user_call.kwargs["metadata"] == {"resume": True}
+
+
+async def test_resume_returns_chained_interrupt(chat_service, session_repo):
+    """Se o resume dispara outra pergunta, body devolve interrupt populado."""
+    session_repo.get_by_id.return_value = _fake_session("sess-1")
+    graph = AsyncMock()
+    graph.ainvoke = AsyncMock(
+        return_value={
+            "messages": [],
+            "__interrupt__": (
+                _interrupt_obj(
+                    {
+                        "kind": "ask_user",
+                        "question": "E o nivel?",
+                        "response_kind": "choice",
+                        "options": ["essencial", "campo"],
+                    }
+                ),
+            ),
+        }
+    )
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        resp = await chat_service.resume("user-1", "sess-1", "soja")
+
+    assert resp.interrupt is not None
+    assert resp.interrupt.options == ["essencial", "campo"]
+    assert resp.content == ""
+
+
+async def test_resume_missing_session_returns_empty(chat_service, session_repo):
+    session_repo.get_by_id.return_value = None
+    resp = await chat_service.resume("user-1", "missing", "x")
+    assert resp.content == ""
+    assert resp.session_id == "missing"
+
+
+async def test_list_pending_interrupts_returns_empty_without_checkpointer(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+):
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+    )
+    assert await svc.list_pending_interrupts("user-1") == []
+
+
+async def test_list_pending_interrupts_filters_sessions_with_interrupt(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+):
+    """Sessoes sem interrupt sao ignoradas; com interrupt entram na lista."""
+    ckpt_factory = AsyncMock(return_value=MagicMock())
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        checkpointer_factory=ckpt_factory,
+    )
+
+    session_repo.list_for_user = AsyncMock(
+        return_value=[
+            _fake_session("sess-A"),
+            _fake_session("sess-B"),
+            _fake_session("sess-C"),
+        ]
+    )
+
+    snap_with = _snapshot_with_interrupts(
+        {
+            "kind": "ask_user",
+            "question": "Qual cultivo?",
+            "response_kind": "choice",
+            "options": ["soja"],
+            "asked_at": "2026-05-22T12:00:00+00:00",
+        },
+        created_at="2026-05-22T12:00:00+00:00",
+    )
+    snap_without = _snapshot_with_interrupts(None)
+
+    async def _aget_state(config):
+        thread_id = config["configurable"]["thread_id"]
+        if thread_id == "sess-A":
+            return snap_with
+        if thread_id == "sess-B":
+            return snap_without
+        # sess-C — simula erro de leitura: deve ser pulada
+        raise RuntimeError("snapshot missing")
+
+    graph = MagicMock()
+    graph.aget_state = _aget_state
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        result = await svc.list_pending_interrupts("user-1")
+
+    assert len(result) == 1
+    assert result[0].session_id == "sess-A"
+    assert result[0].interrupt.question == "Qual cultivo?"
+    assert result[0].interrupt.options == ["soja"]
+
+
+async def test_list_pending_interrupts_skips_invalid_payload(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+):
+    """Interrupt cujo value nao eh dict eh silenciosamente pulado."""
+    ckpt_factory = AsyncMock(return_value=MagicMock())
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        checkpointer_factory=ckpt_factory,
+    )
+    session_repo.list_for_user = AsyncMock(
+        return_value=[_fake_session("sess-X")]
+    )
+
+    snap = _snapshot_with_interrupts({"question": "ok"})  # falta required fields
+    # Substitui value por string pra forcar branch invalid
+    snap.tasks[0].interrupts[0].value = "not a dict"
+
+    graph = MagicMock()
+    graph.aget_state = AsyncMock(return_value=snap)
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        result = await svc.list_pending_interrupts("user-1")
+
+    assert result == []
+
+
+async def test_get_graph_caches_compiled_instance(chat_service):
+    """_get_graph deve memoizar o grafo entre chamadas."""
+    graph = MagicMock()
+    with patch(
+        "app.domains.chat.service.build_graph", return_value=graph
+    ) as bg:
+        g1 = await chat_service._get_graph()
+        g2 = await chat_service._get_graph()
+        assert g1 is g2 is graph
+        assert bg.call_count == 1
+
+
+async def test_get_graph_handles_checkpointer_factory_failure(
+    session_repo, message_repo, inference_svc, action_plan_svc, diagnosis_svc,
+):
+    """Falha do checkpointer_factory nao bloqueia build_graph."""
+    failing = AsyncMock(side_effect=RuntimeError("no postgres"))
+    svc = ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=inference_svc,
+        action_plan_svc=action_plan_svc,
+        diagnosis_svc=diagnosis_svc,
+        checkpointer_factory=failing,
+    )
+    graph = MagicMock()
+    with patch("app.domains.chat.service.build_graph", return_value=graph) as bg:
+        g = await svc._get_graph()
+        assert g is graph
+        # build_graph foi chamado com checkpointer=None
+        assert bg.call_args.kwargs["checkpointer"] is None

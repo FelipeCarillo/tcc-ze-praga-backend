@@ -307,3 +307,166 @@ async def test_chat_stream_passes_image_filename(client_chat, mock_chat_svc):
     assert captured["image_filename"] == "folha.jpg"
     assert captured["message_text"] == "analisa"
     assert captured["model_id"] == "ensemble"
+
+
+# ── HITL: /chat/resume + /chat/interrupts (TCC-058) ───────────────────────────
+
+
+async def test_resume_invokes_service_and_returns_chat_response(
+    client_chat, mock_chat_svc
+):
+    """POST /chat/resume passa thread_id+response e devolve ChatResponse."""
+    mock_chat_svc.resume = AsyncMock(
+        return_value=ChatResponse(
+            role="assistant",
+            content="Continuando com soja confirmada.",
+            session_id="sess-1",
+        )
+    )
+
+    r = await client_chat.post(
+        "/api/v1/chat/resume",
+        json={"thread_id": "sess-1", "response": "soja"},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["content"] == "Continuando com soja confirmada."
+    assert body["session_id"] == "sess-1"
+
+    mock_chat_svc.resume.assert_awaited_once()
+    kwargs = mock_chat_svc.resume.await_args.kwargs
+    assert kwargs["thread_id"] == "sess-1"
+    assert kwargs["response"] == "soja"
+
+
+async def test_resume_returns_chained_interrupt(client_chat, mock_chat_svc):
+    """Quando o agente dispara outra pergunta apos resume, interrupt fica no body."""
+    from app.domains.chat.schemas import InterruptInfo
+
+    mock_chat_svc.resume = AsyncMock(
+        return_value=ChatResponse(
+            role="assistant",
+            content="",
+            session_id="sess-1",
+            interrupt=InterruptInfo(
+                kind="ask_user",
+                question="Confirma o plano de campo?",
+                response_kind="boolean",
+            ),
+        )
+    )
+
+    r = await client_chat.post(
+        "/api/v1/chat/resume",
+        json={"thread_id": "sess-1", "response": "soja"},
+    )
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["interrupt"]["question"] == "Confirma o plano de campo?"
+    assert body["interrupt"]["response_kind"] == "boolean"
+
+
+async def test_resume_stream_passes_payload(client_chat, mock_chat_svc):
+    captured = {}
+
+    async def _stream(**kwargs):
+        captured.update(kwargs)
+        yield {"event": "token", "data": "ok"}
+        yield {"event": "done", "data": "sess-1"}
+
+    mock_chat_svc.resume_stream = _stream
+
+    async with client_chat.stream(
+        "POST",
+        "/api/v1/chat/resume/stream",
+        json={"thread_id": "sess-1", "response": "milho"},
+    ) as r:
+        assert r.status_code == 200
+        body = b""
+        async for chunk in r.aiter_bytes():
+            body += chunk
+
+    text = body.decode("utf-8")
+    assert "event: token" in text
+    assert "event: done" in text
+    assert captured["thread_id"] == "sess-1"
+    assert captured["response"] == "milho"
+
+
+async def test_resume_stream_serializes_interrupt_event(client_chat, mock_chat_svc):
+    """Quando resume_stream emite interrupt (dict), router serializa pra JSON."""
+
+    async def _stream(**kwargs):
+        yield {
+            "event": "interrupt",
+            "data": {
+                "kind": "ask_user",
+                "question": "Top-2 proximos — qual?",
+                "response_kind": "choice",
+                "options": ["ferrugem", "mancha-alvo"],
+            },
+        }
+        yield {"event": "done", "data": "sess-1"}
+
+    mock_chat_svc.resume_stream = _stream
+
+    async with client_chat.stream(
+        "POST",
+        "/api/v1/chat/resume/stream",
+        json={"thread_id": "sess-1", "response": "x"},
+    ) as r:
+        body = b""
+        async for chunk in r.aiter_bytes():
+            body += chunk
+
+    text = body.decode("utf-8")
+    assert "event: interrupt" in text
+    assert "ferrugem" in text
+    assert "mancha-alvo" in text
+
+
+async def test_list_interrupts_returns_pending_list(client_chat, mock_chat_svc):
+    from app.domains.chat.schemas import InterruptInfo, PendingInterrupt
+
+    mock_chat_svc.list_pending_interrupts = AsyncMock(
+        return_value=[
+            PendingInterrupt(
+                session_id="sess-A",
+                interrupt=InterruptInfo(
+                    kind="ask_user",
+                    question="Qual cultivo?",
+                    response_kind="choice",
+                    options=["soja", "milho"],
+                ),
+                created_at="2026-05-22T12:00:00Z",
+            ),
+            PendingInterrupt(
+                session_id="sess-B",
+                interrupt=InterruptInfo(
+                    kind="ask_user",
+                    question="Confirma?",
+                    response_kind="boolean",
+                ),
+            ),
+        ]
+    )
+
+    r = await client_chat.get("/api/v1/chat/interrupts")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 2
+    assert body[0]["session_id"] == "sess-A"
+    assert body[0]["interrupt"]["options"] == ["soja", "milho"]
+    assert body[1]["session_id"] == "sess-B"
+
+
+async def test_list_interrupts_empty(client_chat, mock_chat_svc):
+    mock_chat_svc.list_pending_interrupts = AsyncMock(return_value=[])
+
+    r = await client_chat.get("/api/v1/chat/interrupts")
+
+    assert r.status_code == 200
+    assert r.json() == []

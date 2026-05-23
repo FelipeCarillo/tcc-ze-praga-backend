@@ -41,6 +41,15 @@ class ChatSessionRepository:
                 return existing
         return await self.create(user_id)
 
+    async def list_for_user(self, user_id: str) -> list[ChatSessionDTO]:
+        """Lista todas as sessoes do usuario ordenadas por updated_at desc."""
+        result = await self._db.execute(
+            select(ChatSession)
+            .where(ChatSession.user_id == user_id)
+            .order_by(ChatSession.updated_at.desc())
+        )
+        return [self._to_dto(s) for s in result.scalars().all()]
+
     async def update_summary(
         self, session_id: str, user_id: str, summary_text: str
     ) -> ChatSessionDTO | None:
