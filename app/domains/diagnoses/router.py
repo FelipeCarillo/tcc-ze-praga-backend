@@ -1,15 +1,19 @@
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 
 from app.core.dependencies import (
+    auth_method_dual,
     get_current_user,
     get_diagnosis_graph_factory,
     get_diagnosis_repository,
     get_diagnosis_service,
     get_store_dep,
+    get_subscription_repository,
+    get_usage_repository,
     get_usage_service,
     require_quota,
+    require_quota_dual,
 )
 from app.core.exceptions import NotFoundError
 from app.domains.auth.dto import UserDTO
@@ -31,21 +35,29 @@ router = APIRouter(prefix="/diagnoses", tags=["Diagnoses"])
 
 @router.post("/analyze", response_model=list[DiagnosisResponse], status_code=200)
 async def analyze(
+    response: Response,
     images: list[UploadFile] = File(...),
     crop_id: str = Form(default="soja"),
     model: str = Form(default="ensemble"),
-    current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.INFERENCE)),
+    current_user: UserDTO = Depends(require_quota_dual),
+    auth_method: str = Depends(auth_method_dual),
     diagnosis_graph_factory=Depends(get_diagnosis_graph_factory),
     diag_repo=Depends(get_diagnosis_repository),
     usage_svc: UsageService = Depends(get_usage_service),
+    usage_repo=Depends(get_usage_repository),
+    sub_repo=Depends(get_subscription_repository),
 ) -> list[DiagnosisResponse]:
-    """Endpoint REST direto pra diagnostico (sem chat). Tier API/Enterprise (Sprint A3).
+    """Endpoint REST direto pra diagnostico (sem chat).
 
-    Invoca o sub-grafo ``diagnosis_graph[crop_id]`` com o batch de imagens e
-    retorna a lista de ``DiagnosisResponse`` persistida. ``image_name`` no DB
-    pega o ``filename`` original; bytes nao sao persistidos aqui — uploads
-    devem usar ``POST /api/v1/uploads`` se persistencia for necessaria.
+    Auth dual: aceita JWT (web) OU ``X-API-Key`` (Enterprise via REST). Quota
+    eh contada por INFERENCE (daily) com JWT, ou API (monthly) com API key.
+    Quando autenticado via API key, response carrega headers
+    ``X-RateLimit-{Limit,Remaining,Reset}`` (TCC-064).
     """
+    feature = (
+        FeatureTypeEnum.API if auth_method == "api_key" else FeatureTypeEnum.INFERENCE
+    )
+
     graph = diagnosis_graph_factory(crop_id)
     image_ids = [img.filename or f"image-{i}" for i, img in enumerate(images)]
 
@@ -94,10 +106,58 @@ async def analyze(
 
     await usage_svc.record_usage(
         current_user.id,
-        FeatureTypeEnum.INFERENCE,
-        {"crop_id": crop_id, "model": model, "batch_size": len(images)},
+        feature,
+        {
+            "crop_id": crop_id,
+            "model": model,
+            "batch_size": len(images),
+            "auth_method": auth_method,
+        },
     )
+
+    # TCC-064: rate limit headers — so' faz sentido pra API key (monthly quota).
+    if auth_method == "api_key":
+        await _set_api_rate_limit_headers(
+            response, current_user.id, usage_repo, sub_repo
+        )
+
     return responses
+
+
+async def _set_api_rate_limit_headers(  # type: ignore[no-untyped-def]
+    response: Response,
+    user_id: str,
+    usage_repo,
+    sub_repo,
+) -> None:
+    """Anexa X-RateLimit-* na response do endpoint /analyze quando autenticado via API.
+
+    Headers (espelham padrao IETF draft):
+        X-RateLimit-Limit:     limite mensal do plano (api_monthly_limit)
+        X-RateLimit-Remaining: limit - usado no mes corrente
+        X-RateLimit-Reset:     epoch UTC do inicio do proximo mes
+    """
+    import calendar
+    from datetime import UTC, datetime, timedelta
+
+    sub = await sub_repo.find_user_subscription(user_id)
+    limit = (
+        sub.plan.api_monthly_limit if sub and sub.plan.api_monthly_limit is not None else 0
+    )
+    used = await usage_repo.count_this_month(user_id, FeatureTypeEnum.API)
+    remaining = max(0, limit - used) if limit else 0
+
+    now = datetime.now(UTC)
+    # Ultimo dia do mes corrente
+    _, last_day = calendar.monthrange(now.year, now.month)
+    next_month_start = (
+        datetime(now.year, now.month, last_day, 23, 59, 59, tzinfo=UTC) + timedelta(seconds=1)
+    )
+    reset_epoch = int(next_month_start.timestamp())
+
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(reset_epoch)
 
 
 @router.post("", response_model=DiagnosisResponse, status_code=201)

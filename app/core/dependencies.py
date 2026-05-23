@@ -1,12 +1,14 @@
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends
+from fastapi import Depends, Header
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import UnauthorizedError
+from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.security import decode_access_token
 from app.db.database import AsyncSessionLocal
+from app.domains.auth.api_key_repository import ApiKeyRepository
+from app.domains.auth.api_key_service import ApiKeyService
 from app.domains.auth.dto import UserDTO
 from app.domains.auth.repository import UserRepository
 from app.domains.auth.service import AuthService
@@ -112,6 +114,16 @@ def get_auth_service(
     repo: UserRepository = Depends(get_user_repository),
 ) -> AuthService:
     return AuthService(repo)
+
+
+def get_api_key_repository(db: AsyncSession = Depends(get_db)) -> ApiKeyRepository:
+    return ApiKeyRepository(db)
+
+
+def get_api_key_service(
+    repo: ApiKeyRepository = Depends(get_api_key_repository),
+) -> ApiKeyService:
+    return ApiKeyService(repo)
 
 
 def get_user_service(  # type: ignore[no-untyped-def]
@@ -264,6 +276,59 @@ async def get_current_user(
     return user
 
 
+async def get_current_user_or_api_key(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    user_repo: UserRepository = Depends(get_user_repository),
+    api_key_svc: ApiKeyService = Depends(get_api_key_service),
+) -> UserDTO:
+    """Auth dual — resolve user via JWT ``Authorization: Bearer`` OU via
+    header ``X-API-Key: zp_live_...``.
+
+    Precedence: ``X-API-Key`` ganha. Pra endpoints publicos como
+    ``POST /diagnoses/analyze`` que sao expostos a Enterprise via API REST.
+
+    Fluxo X-API-Key:
+        1. Verify (lookup por prefix + bcrypt checkpw)
+        2. Carrega user dono da key
+        3. ``touch_last_used`` async
+        4. Retorna ``UserDTO`` ativo
+
+    Fluxo JWT: identico ao ``get_current_user``.
+    """
+    if x_api_key:
+        api_key = await api_key_svc.verify(x_api_key)
+        if api_key is None or not api_key.is_active:
+            raise UnauthorizedError("Invalid API key")
+        await api_key_svc.touch_last_used(api_key.id)
+        user = await user_repo.find_by_id(api_key.user_id)
+        if user is None or not user.is_active:
+            raise UnauthorizedError("API key user not found or inactive")
+        return user
+
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "", 1)
+        payload = decode_access_token(token)
+        user = await user_repo.find_by_id(payload["sub"])
+        if not user or not user.is_active:
+            raise UnauthorizedError("User not found or inactive")
+        return user
+
+    raise UnauthorizedError("Authentication required")
+
+
+async def auth_method_dual(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> str:
+    """Auxiliar leve pra descobrir como o request foi autenticado.
+
+    Retorna ``"api_key"`` quando ``X-API-Key`` esta presente,
+    senao ``"jwt"``. Usado por handlers que precisam contabilizar quota
+    diferente (INFERENCE vs API) e por middleware/rate-limit headers.
+    """
+    return "api_key" if x_api_key else "jwt"
+
+
 # ── Quota ─────────────────────────────────────────────────────────────────────
 
 
@@ -276,3 +341,49 @@ def require_quota(feature: FeatureTypeEnum):  # type: ignore[no-untyped-def]
         return current_user
 
     return _dependency
+
+
+async def require_quota_dual(  # type: ignore[no-untyped-def]
+    current_user: UserDTO = Depends(get_current_user_or_api_key),
+    auth_method: str = Depends(auth_method_dual),
+    usage_svc=Depends(get_usage_service),
+) -> UserDTO:
+    """Quota-check para endpoints com auth dual (JWT ou API key).
+
+    Mapeia auth method -> feature:
+        - ``api_key`` -> ``FeatureTypeEnum.API`` (monthly quota)
+        - ``jwt``     -> ``FeatureTypeEnum.INFERENCE`` (daily quota)
+    """
+    feature = (
+        FeatureTypeEnum.API if auth_method == "api_key" else FeatureTypeEnum.INFERENCE
+    )
+    await usage_svc.check_quota(current_user.id, feature)
+    return current_user
+
+
+# ── Tier ──────────────────────────────────────────────────────────────────────
+
+
+async def require_tier_enterprise(  # type: ignore[no-untyped-def]
+    current_user: UserDTO = Depends(get_current_user),
+    sub_repo=Depends(get_subscription_repository),
+) -> UserDTO:
+    """Permite acesso apenas a usuarios com plano Enterprise (api_access=True).
+
+    Checa pela feature flag ``api_access`` no JSON ``features`` do plano —
+    fallback pra tier_name == 'enterprise' quando features for None.
+    """
+    sub = await sub_repo.find_user_subscription(current_user.id)
+    if not sub:
+        raise ForbiddenError("API keys disponiveis apenas no plano Enterprise")
+
+    features = sub.plan.features or {}
+    api_access = features.get("api_access") if isinstance(features, dict) else False
+    if api_access:
+        return current_user
+
+    # Fallback pre-features (em testes/seeds antigos): aceita pelo nome.
+    if sub.plan.name == "enterprise":
+        return current_user
+
+    raise ForbiddenError("API keys disponiveis apenas no plano Enterprise")

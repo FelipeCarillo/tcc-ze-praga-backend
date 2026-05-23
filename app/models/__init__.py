@@ -1,5 +1,6 @@
 from app.models.action_plan import ActionPlan
 from app.models.action_plan_source import ActionPlanSource
+from app.models.api_key import ApiKey
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
 from app.models.crop import Crop
@@ -19,6 +20,7 @@ __all__ = [
     "DiagnosisTop3",
     "ActionPlan",
     "ActionPlanSource",
+    "ApiKey",
     "ChatSession",
     "ChatMessage",
     "SubscriptionPlan",

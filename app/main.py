@@ -14,6 +14,7 @@ from app.core.exceptions import (
     UnauthorizedError,
 )
 from app.domains.action_plans.router import router as action_plans_router
+from app.domains.auth.api_key_router import router as api_keys_router
 from app.domains.auth.router import router as auth_router
 from app.domains.chat.router import router as chat_router
 from app.domains.chat.router import sessions_router as chat_sessions_router
@@ -92,6 +93,7 @@ async def quota_exceeded_handler(request: Request, exc: QuotaExceededError) -> J
 API_PREFIX = "/api/v1"
 
 app.include_router(auth_router, prefix=API_PREFIX)
+app.include_router(api_keys_router, prefix=API_PREFIX)
 app.include_router(users_router, prefix=API_PREFIX)
 app.include_router(diagnoses_router, prefix=API_PREFIX)
 app.include_router(inference_router, prefix=API_PREFIX)

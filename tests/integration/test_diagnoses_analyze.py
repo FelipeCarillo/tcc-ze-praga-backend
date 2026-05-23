@@ -15,10 +15,14 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.dependencies import (
     get_current_user,
+    get_current_user_or_api_key,
     get_diagnosis_graph_factory,
     get_diagnosis_repository,
+    get_subscription_repository,
+    get_usage_repository,
     get_usage_service,
     require_quota,
+    require_quota_dual,
 )
 from app.main import app
 from app.shared.enums import FeatureTypeEnum
@@ -69,12 +73,16 @@ async def client_analyze(mock_graph_factory, mock_diag_repo, mock_usage_svc):
     app.dependency_overrides[require_quota(FeatureTypeEnum.INFERENCE)] = (
         lambda: make_user_dto()
     )
+    app.dependency_overrides[require_quota_dual] = lambda: make_user_dto()
     app.dependency_overrides[get_diagnosis_graph_factory] = (
         lambda: mock_graph_factory
     )
     app.dependency_overrides[get_diagnosis_repository] = lambda: mock_diag_repo
     app.dependency_overrides[get_usage_service] = lambda: mock_usage_svc
+    app.dependency_overrides[get_usage_repository] = lambda: AsyncMock()
+    app.dependency_overrides[get_subscription_repository] = lambda: AsyncMock()
     app.dependency_overrides[get_current_user] = lambda: make_user_dto()
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: make_user_dto()
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as ac:
@@ -159,6 +167,7 @@ async def test_analyze_records_usage_with_batch_metadata(
         "crop_id": "milho",
         "model": "vit",
         "batch_size": 2,
+        "auth_method": "jwt",
     }
 
 
