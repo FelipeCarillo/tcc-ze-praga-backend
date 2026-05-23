@@ -71,8 +71,8 @@ class ChatState(TypedDict, total=False):
     detected_crop_id: str | None  # set por identify_crop V2 ou prefs
     preferred_action_level: str  # "essencial" | "campo" | "especialista"
 
-    # features do plano ativo (Sprint A3 / TCC-051)
-    # PlanFeatures contem llm_model, action_plan_levels permitidos, etc.
+    # features do plano ativo (Sprint A3 / TCC-051) — PlanFeatures contem
+    # llm_model, action_plan_levels, allowed_crops, identify_crop_auto, etc.
     plan_features: PlanFeatures
 
     # contexto recuperado (Store / DB) — populado em Sprint A2.5

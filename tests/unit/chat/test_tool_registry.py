@@ -276,8 +276,8 @@ def test_tool_config_is_frozen() -> None:
         cfg.name = "y"  # type: ignore[misc]
 
 
-def test_default_registry_has_five_tools_post_a3() -> None:
-    """Smoke-test do registry default (TCC-050 adicionou compare_diagnoses)."""
+def test_default_registry_has_six_tools_post_v2_dormant() -> None:
+    """Smoke-test: 5 v1 (4 base + compare_diagnoses) + 1 v2 (identify_crop, dormante)."""
     cfgs = get_registry()
     assert {c.name for c in cfgs} == {
         "deep_diagnose",
@@ -285,10 +285,20 @@ def test_default_registry_has_five_tools_post_a3() -> None:
         "get_action_plan",
         "search_my_diagnoses",
         "compare_diagnoses",
+        "identify_crop",
     }
-    for c in cfgs:
-        assert c.enabled_globally is True
-        assert c.required_feature is None
+    # 5 tools v1 + 1 tool v2 (identify_crop dormente)
+    v1_cfgs = [c for c in cfgs if c.version == 1]
+    v2_cfgs = [c for c in cfgs if c.version == 2]
+    assert len(v1_cfgs) == 5
+    assert len(v2_cfgs) == 1
+    # Tools v1 base sem gating (excluindo compare_diagnoses que tem min_tier)
+    base_tools = {"deep_diagnose", "get_disease_info", "get_action_plan", "search_my_diagnoses"}
+    for c in v1_cfgs:
+        if c.name in base_tools:
+            assert c.enabled_globally is True
+            assert c.required_feature is None
+            assert c.min_tier is None
 
 
 def test_compare_diagnoses_gated_for_enterprise_only() -> None:
@@ -300,3 +310,114 @@ def test_compare_diagnoses_gated_for_enterprise_only() -> None:
     assert "compare_diagnoses" not in free
     assert "compare_diagnoses" not in pro
     assert "compare_diagnoses" in enterprise
+
+
+# ── identify_crop V2 — flag + tier + feature gating ──────────────────────────
+
+
+def test_identify_crop_in_registry_with_v2_gating() -> None:
+    """identify_crop deve estar registrado como V2 com gating Pro+ + feature."""
+    cfgs = get_registry()
+    icrop = next(c for c in cfgs if c.name == "identify_crop")
+
+    assert icrop.version == 2
+    assert icrop.factory_key == "identify_crop"
+    assert icrop.required_feature == "identify_crop_auto"
+    assert icrop.min_tier == "pro"
+
+
+def test_identify_crop_dormant_by_default_flag_off() -> None:
+    """Default (AGENT_ENABLE_IDENTIFY_CROP=false): tool nao deve aparecer
+    em get_active_tool_names mesmo com tier Pro + feature ligada.
+    """
+    from app.config import settings
+
+    # Sanity: o default da settings deve ser False (V2 dormente).
+    assert settings.agent_enable_identify_crop is False
+
+    pro_features = {
+        "tier_name": "pro",
+        "identify_crop_auto": True,
+    }
+    assert "identify_crop" not in get_active_tool_names(pro_features)
+
+
+def test_identify_crop_enabled_globally_and_pro_with_feature_activates(
+    monkeypatch,
+) -> None:
+    """Com flag on + tier Pro + feature, identify_crop deve ficar ativo."""
+    # Substitui o registry pra simular AGENT_ENABLE_IDENTIFY_CROP=true
+    custom = [
+        ToolConfig(
+            name="identify_crop",
+            version=2,
+            factory_key="identify_crop",
+            enabled_globally=True,
+            required_feature="identify_crop_auto",
+            min_tier="pro",
+            description="...",
+        ),
+    ]
+    monkeypatch.setattr(tool_registry, "get_registry", lambda: custom)
+
+    pro_features = {"tier_name": "pro", "identify_crop_auto": True}
+    assert get_active_tool_names(pro_features) == ["identify_crop"]
+
+
+def test_identify_crop_blocked_for_free_tier_even_with_flag_and_feature(
+    monkeypatch,
+) -> None:
+    """Free tier nao acessa V2 (min_tier=pro) mesmo com flag + feature on."""
+    custom = [
+        ToolConfig(
+            name="identify_crop",
+            version=2,
+            factory_key="identify_crop",
+            enabled_globally=True,
+            required_feature="identify_crop_auto",
+            min_tier="pro",
+            description="...",
+        ),
+    ]
+    monkeypatch.setattr(tool_registry, "get_registry", lambda: custom)
+
+    free_features = {"tier_name": "free", "identify_crop_auto": True}
+    assert get_active_tool_names(free_features) == []
+
+
+def test_identify_crop_blocked_without_feature_flag(monkeypatch) -> None:
+    """Tier Pro sem ``identify_crop_auto=True`` no plano → bloqueada."""
+    custom = [
+        ToolConfig(
+            name="identify_crop",
+            version=2,
+            factory_key="identify_crop",
+            enabled_globally=True,
+            required_feature="identify_crop_auto",
+            min_tier="pro",
+            description="...",
+        ),
+    ]
+    monkeypatch.setattr(tool_registry, "get_registry", lambda: custom)
+
+    # Pro mas sem feature do plano
+    assert get_active_tool_names({"tier_name": "pro"}) == []
+    assert (
+        get_active_tool_names(
+            {"tier_name": "pro", "identify_crop_auto": False}
+        )
+        == []
+    )
+
+
+def test_identify_crop_uses_settings_flag_in_registry() -> None:
+    """A entry de identify_crop usa settings.agent_enable_identify_crop pra
+    enabled_globally. O default (False) deixa a tool dormente — verificacao
+    indireta via get_active_tool_names.
+    """
+    from app.config import settings
+
+    cfgs = get_registry()
+    icrop = next(c for c in cfgs if c.name == "identify_crop")
+    # O kill-switch deve refletir o valor atual da settings.
+    assert icrop.enabled_globally == settings.agent_enable_identify_crop
