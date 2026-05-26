@@ -124,6 +124,8 @@ def _diagnosis_response(diagnosis_id: str = "diag-1") -> DiagnosisResponse:
 def mock_inference_svc():
     svc = MagicMock()
     svc.predict.return_value = _inference_result()
+    # persist_node reads disease_catalog[0].crop_id pra preencher Diagnosis.crop_id (NOT NULL).
+    svc.disease_catalog = [MagicMock(crop_id="crop-uuid-soja")]
     return svc
 
 
@@ -210,7 +212,7 @@ async def test_compose_action_plan_handles_lookup_failure(mock_action_plan_svc):
     ]
 
 
-async def test_persist_node_creates_one_diagnosis_per_image(mock_diagnosis_svc):
+async def test_persist_node_creates_one_diagnosis_per_image(mock_diagnosis_svc, mock_inference_svc):
     state = {
         "user_id": "user-uuid-1",
         "model_id": "ensemble",
@@ -241,7 +243,9 @@ async def test_persist_node_creates_one_diagnosis_per_image(mock_diagnosis_svc):
         _diagnosis_response("diag-2"),
     ]
 
-    update = await persist_node(state, diagnosis_svc=mock_diagnosis_svc)
+    update = await persist_node(
+        state, diagnosis_svc=mock_diagnosis_svc, inference_svc=mock_inference_svc
+    )
 
     assert update["persisted_ids"] == ["diag-1", "diag-2"]
     assert mock_diagnosis_svc.create.await_count == 2
@@ -250,7 +254,7 @@ async def test_persist_node_creates_one_diagnosis_per_image(mock_diagnosis_svc):
     assert args_first.args[1].image_name == "leaf-1.jpg"
 
 
-async def test_persist_node_indexes_in_store_when_provided(mock_diagnosis_svc):
+async def test_persist_node_indexes_in_store_when_provided(mock_diagnosis_svc, mock_inference_svc):
     """TCC-045: quando store eh passado, cada diagnosis vira aput no namespace correto."""
     state = {
         "user_id": "user-uuid-1",
@@ -272,7 +276,10 @@ async def test_persist_node_indexes_in_store_when_provided(mock_diagnosis_svc):
     store = AsyncMock()
 
     update = await persist_node(
-        state, diagnosis_svc=mock_diagnosis_svc, store=store
+        state,
+        diagnosis_svc=mock_diagnosis_svc,
+        inference_svc=mock_inference_svc,
+        store=store,
     )
 
     assert update["persisted_ids"] == ["diag-1"]
@@ -282,7 +289,7 @@ async def test_persist_node_indexes_in_store_when_provided(mock_diagnosis_svc):
     assert aput_kwargs["key"] == "diag-1"
 
 
-async def test_persist_node_swallows_store_errors(mock_diagnosis_svc, caplog):
+async def test_persist_node_swallows_store_errors(mock_diagnosis_svc, mock_inference_svc, caplog):
     """Erros do Store nao quebram o persist — diagnosis fica no DB mesmo assim."""
     state = {
         "user_id": "user-uuid-1",
@@ -305,14 +312,17 @@ async def test_persist_node_swallows_store_errors(mock_diagnosis_svc, caplog):
     store.aput.side_effect = RuntimeError("Store offline")
 
     update = await persist_node(
-        state, diagnosis_svc=mock_diagnosis_svc, store=store
+        state,
+        diagnosis_svc=mock_diagnosis_svc,
+        inference_svc=mock_inference_svc,
+        store=store,
     )
 
     assert update["persisted_ids"] == ["diag-1"]
     assert "Failed to index diagnosis diag-1 in Store" in caplog.text
 
 
-async def test_persist_node_writes_sources_from_evidence(mock_diagnosis_svc):
+async def test_persist_node_writes_sources_from_evidence(mock_diagnosis_svc, mock_inference_svc):
     """TCC-056: persist_node grava state.evidence_per_image em diagnoses.sources."""
     from app.domains.diagnosis_graph.nodes import _build_diagnosis_sources
 
@@ -349,7 +359,9 @@ async def test_persist_node_writes_sources_from_evidence(mock_diagnosis_svc):
     }
     mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
 
-    update = await persist_node(state, diagnosis_svc=mock_diagnosis_svc)
+    update = await persist_node(
+        state, diagnosis_svc=mock_diagnosis_svc, inference_svc=mock_inference_svc
+    )
 
     assert update["persisted_ids"] == ["diag-1"]
     body = mock_diagnosis_svc.create.await_args_list[0].args[1]
@@ -362,7 +374,7 @@ async def test_persist_node_writes_sources_from_evidence(mock_diagnosis_svc):
     assert sci_src.snippet == "Estudo de campo com isolados resistentes."
 
 
-async def test_persist_node_handles_empty_evidence(mock_diagnosis_svc):
+async def test_persist_node_handles_empty_evidence(mock_diagnosis_svc, mock_inference_svc):
     """Sem evidence_per_image, sources fica []."""
     state = {
         "user_id": "user-uuid-1",
@@ -382,7 +394,9 @@ async def test_persist_node_handles_empty_evidence(mock_diagnosis_svc):
     }
     mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
 
-    await persist_node(state, diagnosis_svc=mock_diagnosis_svc)
+    await persist_node(
+        state, diagnosis_svc=mock_diagnosis_svc, inference_svc=mock_inference_svc
+    )
     body = mock_diagnosis_svc.create.await_args_list[0].args[1]
     assert body.sources == []
 
@@ -413,7 +427,7 @@ def test_build_diagnosis_sources_handles_none_input() -> None:
     assert _build_diagnosis_sources(None) == []  # type: ignore[arg-type]
 
 
-async def test_persist_node_no_store_skips_indexing(mock_diagnosis_svc):
+async def test_persist_node_no_store_skips_indexing(mock_diagnosis_svc, mock_inference_svc):
     """Sem store, nada acontece com indexing — back-compat."""
     state = {
         "user_id": "user-uuid-1",
@@ -433,7 +447,9 @@ async def test_persist_node_no_store_skips_indexing(mock_diagnosis_svc):
     }
     mock_diagnosis_svc.create.side_effect = [_diagnosis_response("diag-1")]
 
-    update = await persist_node(state, diagnosis_svc=mock_diagnosis_svc)
+    update = await persist_node(
+        state, diagnosis_svc=mock_diagnosis_svc, inference_svc=mock_inference_svc
+    )
 
     assert update["persisted_ids"] == ["diag-1"]
 

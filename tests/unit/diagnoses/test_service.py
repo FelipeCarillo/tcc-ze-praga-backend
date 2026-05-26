@@ -37,7 +37,7 @@ def _create_request() -> CreateDiagnosisRequest:
 
 async def test_create_success(diagnosis_repo):
     svc = DiagnosisService(diagnosis_repo)
-    result = await svc.create("user-uuid-1", _create_request())
+    result = await svc.create("user-uuid-1", _create_request(), crop_id="crop-uuid-soja")
     assert result.disease_id == "ferrugem-asiatica"
     diagnosis_repo.create.assert_awaited_once()
 

@@ -19,7 +19,7 @@ from app.domains.subscriptions.features import (
 def test_free_features_defaults() -> None:
     """Free tier deve usar gpt-4o-mini + apenas resnet50 + nivel essencial."""
     assert FREE_FEATURES.tier_name == "free"
-    assert FREE_FEATURES.llm_model == "gpt-4o-mini"
+    assert FREE_FEATURES.llm_model == "openai:gpt-4o-mini"
     assert FREE_FEATURES.diagnosis_models == ["resnet50"]
     assert FREE_FEATURES.action_plan_levels == ["essencial"]
     assert FREE_FEATURES.allowed_crops is None
@@ -33,7 +33,7 @@ def test_free_features_defaults() -> None:
 def test_pro_features_defaults() -> None:
     """Pro tier: gpt-4o + multi-modelo + essencial+campo + soja only."""
     assert PRO_FEATURES.tier_name == "pro"
-    assert PRO_FEATURES.llm_model == "gpt-4o"
+    assert PRO_FEATURES.llm_model == "openai:gpt-4o"
     assert "resnet50" in PRO_FEATURES.diagnosis_models
     assert "vit" in PRO_FEATURES.diagnosis_models
     assert "ensemble" not in PRO_FEATURES.diagnosis_models  # ensemble = enterprise only
@@ -49,7 +49,7 @@ def test_pro_features_defaults() -> None:
 def test_enterprise_features_defaults() -> None:
     """Enterprise: tudo destravado, todos os crops."""
     assert ENTERPRISE_FEATURES.tier_name == "enterprise"
-    assert ENTERPRISE_FEATURES.llm_model == "gpt-4o"
+    assert ENTERPRISE_FEATURES.llm_model == "openai:gpt-4o"
     assert "ensemble" in ENTERPRISE_FEATURES.diagnosis_models
     assert "especialista" in ENTERPRISE_FEATURES.action_plan_levels
     assert ENTERPRISE_FEATURES.allowed_crops is None  # todos os cultivos

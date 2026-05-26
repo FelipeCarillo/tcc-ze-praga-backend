@@ -60,7 +60,7 @@ async def test_create_diagnosis(mock_db):
     mock_db.execute.return_value.unique.return_value.scalar_one_or_none.return_value = orm_diag
 
     repo = DiagnosisRepository(mock_db)
-    result = await repo.create("user-1", _make_create_request())
+    result = await repo.create("user-1", _make_create_request(), crop_id="crop-uuid-soja")
 
     mock_db.add.assert_called()
     mock_db.flush.assert_awaited()
@@ -91,7 +91,7 @@ async def test_create_diagnosis_with_top3(mock_db):
         ],
     )
     repo = DiagnosisRepository(mock_db)
-    result = await repo.create("user-1", request)
+    result = await repo.create("user-1", request, crop_id="crop-uuid-soja")
     assert result is not None
 
 
