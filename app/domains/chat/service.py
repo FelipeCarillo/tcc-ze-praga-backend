@@ -257,55 +257,71 @@ class ChatService:
         }
 
         collected_chunks: list[str] = []
-        async for event in graph.astream_events(
-            initial_state, version="v2", config=config
-        ):
-            kind = event.get("event")
-            if kind == "on_chat_model_stream":
-                chunk = event["data"].get("chunk")
-                token = getattr(chunk, "content", None) or ""
-                if token:
-                    collected_chunks.append(token)
-                    yield {"event": "token", "data": token}
-            elif kind == "on_tool_start":
-                yield {"event": "tool_call", "data": event.get("name", "")}
-            elif kind == "on_tool_end":
-                output = event["data"].get("output")
-                tool_text = self._tool_output_to_text(output)
-                yield {"event": "tool_result", "data": tool_text}
+        try:
+            async for event in graph.astream_events(
+                initial_state, version="v2", config=config
+            ):
+                kind = event.get("event")
+                if kind == "on_chat_model_stream":
+                    # Só transmite tokens do nó `llm` (agente principal). LLMs
+                    # aninhados — o de visão no inspect_image, o summary no
+                    # maybe_summarize — também emitem on_chat_model_stream e
+                    # vazariam pro balão (ex.: o JSON do inspect_image).
+                    if event.get("metadata", {}).get("langgraph_node") != "llm":
+                        continue
+                    chunk = event["data"].get("chunk")
+                    token = getattr(chunk, "content", None) or ""
+                    if token:
+                        collected_chunks.append(token)
+                        yield {"event": "token", "data": token}
+                elif kind == "on_tool_start":
+                    yield {"event": "tool_call", "data": event.get("name", "")}
+                elif kind == "on_tool_end":
+                    output = event["data"].get("output")
+                    tool_text = self._tool_output_to_text(output)
+                    yield {"event": "tool_result", "data": tool_text}
 
-        # Apos o streaming completar, verifica se o grafo pausou em interrupt.
-        # Quando pausou, emite evento `interrupt` em vez de persistir resposta
-        # vazia — o cliente deve renderizar dialog + chamar /chat/resume.
-        interrupt_info = await self._extract_pending_interrupt(graph, config)
-        if interrupt_info is not None:
+            # Apos o streaming completar, verifica se o grafo pausou em interrupt.
+            # Quando pausou, emite evento `interrupt` em vez de persistir resposta
+            # vazia — o cliente deve renderizar dialog + chamar /chat/resume.
+            interrupt_info = await self._extract_pending_interrupt(graph, config)
+            if interrupt_info is not None:
+                yield {
+                    "event": "interrupt",
+                    "data": interrupt_info.model_dump(),
+                }
+                yield {"event": "done", "data": session.id}
+                return
+
+            assistant_text = "".join(collected_chunks).strip()
+            if not assistant_text:
+                # Fallback: ChatModel pode não ter emitido tokens streamados (FakeLLM,
+                # erro de streaming, etc). Recupera o final via invoke não-stream
+                # como safety net pra persistir algo coerente.
+                result = await graph.ainvoke(initial_state, config=config)
+                assistant_text = self._extract_final_text(result["messages"])
+
+            # Se o agente diagnosticou via analyze_image, o id ficou em
+            # ``diagnoses_in_turn`` no snapshot — carrega e emite o evento.
+            diagnosis = await self._diagnosis_from_snapshot(graph, config, user_id)
+            if diagnosis is not None:
+                yield {"event": "diagnosis", "data": diagnosis.model_dump_json()}
+
+            await self._message_repo.create(
+                session_id=session.id,
+                role="assistant",
+                content=assistant_text,
+                diagnosis_id=diagnosis.id if diagnosis else None,
+            )
+        except Exception:
+            # Sem isto, uma exceção no meio do stream mata o gerador SSE sem
+            # emitir `done` — o cliente fica com o balão travado e o erro some
+            # dos logs. Logamos a causa e emitimos um evento `error` terminal.
+            logger.exception("chat_stream falhou (session=%s)", session.id)
             yield {
-                "event": "interrupt",
-                "data": interrupt_info.model_dump(),
+                "event": "error",
+                "data": "Não foi possível gerar a resposta agora. Tente novamente.",
             }
-            yield {"event": "done", "data": session.id}
-            return
-
-        assistant_text = "".join(collected_chunks).strip()
-        if not assistant_text:
-            # Fallback: ChatModel pode não ter emitido tokens streamados (FakeLLM,
-            # erro de streaming, etc). Recupera o final via invoke não-stream
-            # como safety net pra persistir algo coerente.
-            result = await graph.ainvoke(initial_state, config=config)
-            assistant_text = self._extract_final_text(result["messages"])
-
-        # Se o agente diagnosticou via analyze_image, o id ficou em
-        # ``diagnoses_in_turn`` no snapshot — carrega e emite o evento.
-        diagnosis = await self._diagnosis_from_snapshot(graph, config, user_id)
-        if diagnosis is not None:
-            yield {"event": "diagnosis", "data": diagnosis.model_dump_json()}
-
-        await self._message_repo.create(
-            session_id=session.id,
-            role="assistant",
-            content=assistant_text,
-            diagnosis_id=diagnosis.id if diagnosis else None,
-        )
 
         yield {"event": "done", "data": session.id}
 
@@ -390,39 +406,53 @@ class ChatService:
         )
 
         collected_chunks: list[str] = []
-        async for event in graph.astream_events(
-            Command(resume=response), version="v2", config=config
-        ):
-            kind = event.get("event")
-            if kind == "on_chat_model_stream":
-                chunk = event["data"].get("chunk")
-                token = getattr(chunk, "content", None) or ""
-                if token:
-                    collected_chunks.append(token)
-                    yield {"event": "token", "data": token}
-            elif kind == "on_tool_start":
-                yield {"event": "tool_call", "data": event.get("name", "")}
-            elif kind == "on_tool_end":
-                output = event["data"].get("output")
-                tool_text = self._tool_output_to_text(output)
-                yield {"event": "tool_result", "data": tool_text}
+        try:
+            async for event in graph.astream_events(
+                Command(resume=response), version="v2", config=config
+            ):
+                kind = event.get("event")
+                if kind == "on_chat_model_stream":
+                    # Só transmite tokens do nó `llm` (agente principal). LLMs
+                    # aninhados — o de visão no inspect_image, o summary no
+                    # maybe_summarize — também emitem on_chat_model_stream e
+                    # vazariam pro balão (ex.: o JSON do inspect_image).
+                    if event.get("metadata", {}).get("langgraph_node") != "llm":
+                        continue
+                    chunk = event["data"].get("chunk")
+                    token = getattr(chunk, "content", None) or ""
+                    if token:
+                        collected_chunks.append(token)
+                        yield {"event": "token", "data": token}
+                elif kind == "on_tool_start":
+                    yield {"event": "tool_call", "data": event.get("name", "")}
+                elif kind == "on_tool_end":
+                    output = event["data"].get("output")
+                    tool_text = self._tool_output_to_text(output)
+                    yield {"event": "tool_result", "data": tool_text}
 
-        interrupt_info = await self._extract_pending_interrupt(graph, config)
-        if interrupt_info is not None:
-            yield {"event": "interrupt", "data": interrupt_info.model_dump()}
-            yield {"event": "done", "data": thread_id}
-            return
+            interrupt_info = await self._extract_pending_interrupt(graph, config)
+            if interrupt_info is not None:
+                yield {"event": "interrupt", "data": interrupt_info.model_dump()}
+                yield {"event": "done", "data": thread_id}
+                return
 
-        assistant_text = "".join(collected_chunks).strip()
-        if not assistant_text:
-            result = await graph.ainvoke(None, config=config)
-            assistant_text = self._extract_final_text(result["messages"])
+            assistant_text = "".join(collected_chunks).strip()
+            if not assistant_text:
+                result = await graph.ainvoke(None, config=config)
+                assistant_text = self._extract_final_text(result["messages"])
 
-        await self._message_repo.create(
-            session_id=thread_id,
-            role="assistant",
-            content=assistant_text,
-        )
+            await self._message_repo.create(
+                session_id=thread_id,
+                role="assistant",
+                content=assistant_text,
+            )
+        except Exception:
+            logger.exception("resume_stream falhou (thread=%s)", thread_id)
+            yield {
+                "event": "error",
+                "data": "Não foi possível retomar a conversa agora. Tente novamente.",
+            }
+
         yield {"event": "done", "data": thread_id}
 
     async def list_pending_interrupts(

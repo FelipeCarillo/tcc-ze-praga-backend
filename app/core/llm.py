@@ -35,6 +35,8 @@ from typing import TYPE_CHECKING, Any
 
 from langchain.chat_models import init_chat_model
 
+from app.config import settings
+
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
@@ -64,5 +66,11 @@ def get_chat_model(model_id: str, **kwargs: Any) -> BaseChatModel:
     Returns:
         ``BaseChatModel`` ja configurado — pronto pra ``ainvoke`` / ``bind_tools``.
     """
+    # Defaults de timeout/retries pra bound o pior caso (callers podem
+    # sobrescrever via kwargs). init_chat_model repassa esses kwargs ao
+    # construtor do provider (ChatOpenAI/ChatAnthropic aceitam ``timeout`` e
+    # ``max_retries``).
+    kwargs.setdefault("timeout", settings.chat_timeout_seconds)
+    kwargs.setdefault("max_retries", settings.chat_max_retries)
     model: BaseChatModel = init_chat_model(_normalize_model_id(model_id), **kwargs)
     return model

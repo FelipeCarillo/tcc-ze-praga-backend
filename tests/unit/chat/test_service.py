@@ -469,8 +469,11 @@ async def test_chat_stream_emits_token_events(chat_service):
         chunk1.content = "Hello "
         chunk2 = MagicMock()
         chunk2.content = "world"
-        yield {"event": "on_chat_model_stream", "data": {"chunk": chunk1}}
-        yield {"event": "on_chat_model_stream", "data": {"chunk": chunk2}}
+        # langgraph_node="llm" — só tokens do agente principal são transmitidos
+        # (LLMs aninhados, ex. visão no inspect_image, são filtrados).
+        meta = {"langgraph_node": "llm"}
+        yield {"event": "on_chat_model_stream", "metadata": meta, "data": {"chunk": chunk1}}
+        yield {"event": "on_chat_model_stream", "metadata": meta, "data": {"chunk": chunk2}}
 
     graph.astream_events = _events_with_tokens
 
@@ -489,6 +492,49 @@ async def test_chat_stream_emits_token_events(chat_service):
 
     tokens = [e["data"] for e in events if e["event"] == "token"]
     assert tokens == ["Hello ", "world"]
+
+
+async def test_chat_stream_filters_nested_llm_tokens(chat_service):
+    """Tokens de LLM aninhado (ex.: visão no inspect_image, nó != 'llm') não
+    vazam pro stream — só o nó 'llm' (agente principal) é transmitido."""
+    graph = MagicMock()
+
+    async def _events(*args, **kwargs):
+        nested = MagicMock()
+        nested.content = '{"is_analyzable_plant": true}'
+        main = MagicMock()
+        main.content = "Olá!"
+        # Emitido dentro da tool (nó 'tools') — deve ser filtrado.
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "tools"},
+            "data": {"chunk": nested},
+        }
+        # Emitido pelo agente principal (nó 'llm') — deve passar.
+        yield {
+            "event": "on_chat_model_stream",
+            "metadata": {"langgraph_node": "llm"},
+            "data": {"chunk": main},
+        }
+
+    graph.astream_events = _events
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        events = await _drain(
+            chat_service.chat_stream(
+                user_id="user-1",
+                session_id=None,
+                message_text="oi",
+                image_bytes=None,
+                image_mime=None,
+                image_filename=None,
+                model_id="ensemble",
+            )
+        )
+
+    tokens = [e["data"] for e in events if e["event"] == "token"]
+    assert tokens == ["Olá!"]
+    assert '{"is_analyzable_plant": true}' not in tokens
 
 
 async def test_chat_stream_emits_tool_events(chat_service):

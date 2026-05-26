@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     chat_model: str = "openai:gpt-4o-mini"
     vision_model: str = "openai:gpt-4o"
 
+    # Limites do cliente LLM — sem isso o SDK pode pendurar/retentar muito além
+    # do esperado (causa do timeout de 30s no 1º turno). Bound o pior caso e
+    # troca um hang por um erro claro. Overridáveis via env.
+    chat_timeout_seconds: int = 60
+    chat_max_retries: int = 2
+
     # OpenAI — ainda usado direto pra embeddings (ate hoje LangChain nao tem
     # ``init_embeddings`` agnostico canonico). ``openai_api_key`` permanece
     # legado pra outros caminhos; pra chat use ``OPENAI_API_KEY`` em ``.env``.

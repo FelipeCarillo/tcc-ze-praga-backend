@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -30,7 +31,23 @@ from app.domains.users.router import router as users_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    yield  # pragma: no cover
+    # Warm-up: inicializa os singletons (roda o setup() de tabelas/índices no
+    # Postgres) no boot, não no 1º request do usuário — evita o cold start que
+    # estourava o timeout de 30s do chat. Best-effort: se Postgres/OpenAI
+    # estiverem indisponíveis no boot, segue lazy no 1º request.
+    from app.db.checkpointer import get_checkpointer
+    from app.db.store import get_store
+
+    try:
+        await get_checkpointer()  # AsyncPostgresSaver.setup()
+        await get_store()  # AsyncPostgresStore.setup() + embeddings
+    except Exception:  # noqa: BLE001 — boot resiliente
+        logging.getLogger(__name__).exception(
+            "Warm-up de singletons falhou — seguirá lazy no 1º request"
+        )
+
+    yield
+
     # Lifespan shutdown — fecha singletons (Store + Checkpointer).
     from app.db.checkpointer import close_checkpointer
     from app.db.store import close_store
