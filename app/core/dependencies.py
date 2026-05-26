@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, Header
 from fastapi.security import OAuth2PasswordBearer
@@ -415,3 +415,18 @@ async def require_tier_enterprise(  # type: ignore[no-untyped-def]
         return current_user
 
     raise ForbiddenError("API keys disponiveis apenas no plano Enterprise")
+
+
+# ── Transcription / STT (TCC-081) ───────────────────────────────────────────────
+
+_transcription_service: Any = None
+
+
+def get_transcription_service():  # type: ignore[no-untyped-def]
+    """Singleton do ``TranscriptionService`` (OpenAI STT) — entrada de voz no chat."""
+    from app.domains.transcription.service import TranscriptionService
+
+    global _transcription_service
+    if _transcription_service is None:
+        _transcription_service = TranscriptionService()
+    return _transcription_service

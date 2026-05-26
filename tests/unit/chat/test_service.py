@@ -145,6 +145,8 @@ async def test_chat_text_only_persists_user_and_assistant_messages(
             user_id="user-1",
             session_id=None,
             message_text="oi",
+            image_bytes=None,
+            image_mime=None,
             image_filename=None,
             model_id="ensemble",
         )
@@ -160,26 +162,36 @@ async def test_chat_text_only_persists_user_and_assistant_messages(
     diagnosis_svc.create.assert_not_called()
 
 
-async def test_chat_with_image_runs_inference_and_persists_diagnosis(
+async def test_chat_with_image_diagnosis_comes_from_state(
     chat_service, session_repo, message_repo, inference_svc, diagnosis_svc
 ):
-    with patch(
-        "app.domains.chat.service.build_graph",
-        return_value=_graph_returning("Detectei Ferrugem."),
-    ):
+    # Novo fluxo (TCC-079): o agente decide via tools; analyze_image persiste o
+    # Diagnosis e grava o id em diagnoses_in_turn. O ChatService o carrega dali.
+    graph = AsyncMock()
+    graph.ainvoke = AsyncMock(
+        return_value={
+            "messages": [HumanMessage(content="u"), AIMessage(content="Detectei Ferrugem.")],
+            "diagnoses_in_turn": ["diag-1"],
+        }
+    )
+    diagnosis_svc.get_by_id = AsyncMock(return_value=_fake_diagnosis_response("diag-1"))
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
         resp = await chat_service.chat(
             user_id="user-1",
             session_id=None,
             message_text="analisa",
+            image_bytes=b"\x89PNG",
+            image_mime="image/jpeg",
             image_filename="folha.jpg",
             model_id="ensemble",
         )
 
     assert resp.diagnosis is not None
     assert resp.diagnosis.disease_id == "ferrugem-asiatica"
-
-    inference_svc.predict.assert_called_once_with("ensemble", "folha.jpg")
-    diagnosis_svc.create.assert_awaited_once()
+    diagnosis_svc.get_by_id.assert_awaited_once_with("diag-1", "user-1")
+    # ChatService nao chama predict diretamente — isso e' job da tool analyze_image.
+    inference_svc.predict.assert_not_called()
 
     # 2 mensagens: user + assistant. A assistant deve linkar o diagnosis.
     assert message_repo.create.await_count == 2
@@ -197,6 +209,8 @@ async def test_chat_uses_existing_session_id(chat_service, session_repo, message
             user_id="user-1",
             session_id="existing",
             message_text="oi",
+            image_bytes=None,
+            image_mime=None,
             image_filename=None,
             model_id="vit",
         )
@@ -213,6 +227,8 @@ async def test_chat_user_message_metadata_includes_image_filename(chat_service, 
             user_id="user-1",
             session_id=None,
             message_text="analisa",
+            image_bytes=b"\x89PNG",
+            image_mime="image/jpeg",
             image_filename="x.jpg",
             model_id="ensemble",
         )
@@ -229,6 +245,8 @@ async def test_chat_user_message_metadata_none_when_no_image(chat_service, messa
             user_id="user-1",
             session_id=None,
             message_text="oi",
+            image_bytes=None,
+            image_mime=None,
             image_filename=None,
             model_id="ensemble",
         )
@@ -431,6 +449,8 @@ async def test_chat_stream_emits_done_event(chat_service, message_repo):
                 user_id="user-1",
                 session_id=None,
                 message_text="oi",
+                image_bytes=None,
+                image_mime=None,
                 image_filename=None,
                 model_id="ensemble",
             )
@@ -460,6 +480,8 @@ async def test_chat_stream_emits_token_events(chat_service):
                 user_id="user-1",
                 session_id=None,
                 message_text="oi",
+                image_bytes=None,
+                image_mime=None,
                 image_filename=None,
                 model_id="ensemble",
             )
@@ -488,6 +510,8 @@ async def test_chat_stream_emits_tool_events(chat_service):
                 user_id="user-1",
                 session_id=None,
                 message_text="x",
+                image_bytes=None,
+                image_mime=None,
                 image_filename=None,
                 model_id="ensemble",
             )
@@ -511,6 +535,12 @@ async def test_chat_stream_with_image_emits_diagnosis_event(
 
     graph.astream_events = _empty_events
     graph.ainvoke = AsyncMock(return_value={"messages": [AIMessage(content="ok")]})
+    # snapshot com diagnoses_in_turn — a tool analyze_image rodou dentro do grafo.
+    snapshot = MagicMock()
+    snapshot.tasks = []
+    snapshot.values = {"diagnoses_in_turn": ["diag-1"]}
+    graph.aget_state = AsyncMock(return_value=snapshot)
+    diagnosis_svc.get_by_id = AsyncMock(return_value=_fake_diagnosis_response("diag-1"))
 
     with patch("app.domains.chat.service.build_graph", return_value=graph):
         events = await _drain(
@@ -518,6 +548,8 @@ async def test_chat_stream_with_image_emits_diagnosis_event(
                 user_id="user-1",
                 session_id=None,
                 message_text="analisa",
+                image_bytes=b"\x89PNG",
+                image_mime="image/jpeg",
                 image_filename="folha.jpg",
                 model_id="ensemble",
             )
@@ -525,8 +557,9 @@ async def test_chat_stream_with_image_emits_diagnosis_event(
 
     diag_events = [e for e in events if e["event"] == "diagnosis"]
     assert len(diag_events) == 1
-    inference_svc.predict.assert_called_once_with("ensemble", "folha.jpg")
-    diagnosis_svc.create.assert_awaited_once()
+    diagnosis_svc.get_by_id.assert_awaited_once_with("diag-1", "user-1")
+    # ChatService nao chama predict diretamente — job da tool analyze_image.
+    inference_svc.predict.assert_not_called()
 
 
 # ── TCC-048: prefetch + close_session ─────────────────────────────────────────
@@ -576,6 +609,8 @@ async def test_chat_prefetches_relevant_diagnoses_when_store_present(
             user_id="user-1",
             session_id=None,
             message_text="ferrugem ano passado",
+            image_bytes=None,
+            image_mime=None,
             image_filename=None,
             model_id="ensemble",
         )
@@ -622,6 +657,8 @@ async def test_chat_prefetch_swallow_errors(
             user_id="user-1",
             session_id=None,
             message_text="oi",
+            image_bytes=None,
+            image_mime=None,
             image_filename=None,
             model_id="ensemble",
         )
@@ -645,6 +682,8 @@ async def test_chat_skips_prefetch_when_no_store(chat_service):
             user_id="user-1",
             session_id=None,
             message_text="oi",
+            image_bytes=None,
+            image_mime=None,
             image_filename=None,
             model_id="ensemble",
         )
@@ -807,6 +846,8 @@ async def test_chat_returns_interrupt_when_graph_pauses(
             user_id="user-1",
             session_id=None,
             message_text="hi",
+            image_bytes=None,
+            image_mime=None,
             image_filename=None,
             model_id="ensemble",
         )

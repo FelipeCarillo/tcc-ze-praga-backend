@@ -150,7 +150,7 @@ async def test_chat_text_only_no_image(client_chat, mock_chat_svc, mock_usage_sv
     # Usage foi registrado
     mock_usage_svc.record_usage.assert_awaited_once()
     metadata = mock_usage_svc.record_usage.await_args.args[2]
-    assert metadata == {"model": "vit", "has_image": False}
+    assert metadata == {"model": "vit", "has_image": False, "has_audio": False}
 
 
 async def test_chat_with_image_returns_diagnosis(
@@ -178,7 +178,7 @@ async def test_chat_with_image_returns_diagnosis(
     assert call_kwargs["image_filename"] == "folha.jpg"
 
     metadata = mock_usage_svc.record_usage.await_args.args[2]
-    assert metadata == {"model": "ensemble", "has_image": True}
+    assert metadata == {"model": "ensemble", "has_image": True, "has_audio": False}
 
 
 async def test_chat_passes_session_id_through(client_chat, mock_chat_svc):
@@ -281,7 +281,7 @@ async def test_chat_stream_records_usage_with_streaming_flag(
 
     mock_usage_svc.record_usage.assert_awaited()
     metadata = mock_usage_svc.record_usage.await_args.args[2]
-    assert metadata == {"model": "vit", "has_image": False, "streaming": True}
+    assert metadata == {"model": "vit", "has_image": False, "has_audio": False, "streaming": True}
 
 
 async def test_chat_stream_passes_image_filename(client_chat, mock_chat_svc):

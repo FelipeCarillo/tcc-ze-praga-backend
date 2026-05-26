@@ -43,16 +43,21 @@ if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
     from app.domains.action_plans.service import ActionPlanService
+    from app.domains.diagnoses.service import DiagnosisService
     from app.domains.inference.service import InferenceService
     from app.domains.subscriptions.features import PlanFeatures
 
 
 SYSTEM_PROMPT = (
     "Você é o Zé Praga, assistente especializado em diagnóstico de doenças foliares de soja. "
-    "Quando o usuário enviar uma imagem (image_filename presente no estado), use analyze_image. "
-    "Quando perguntar sobre uma doença específica, use get_disease_info. "
-    "Quando precisar de recomendações de manejo, use get_action_plan. "
-    "Responda em português, com clareza e tom amigável."
+    "Quando o turno tiver uma imagem anexada, chame PRIMEIRO a tool inspect_image. "
+    "Se o resultado vier com is_analyzable_plant=false, NÃO diagnostique: explique com "
+    "gentileza que você só analisa fotos de plantas/folhas de cultivo e peça uma foto da "
+    "folha afetada. Se vier is_analyzable_plant=true, chame analyze_image para obter o "
+    "diagnóstico e então explique o resultado ao usuário de forma amigável; use "
+    "get_action_plan quando fizer sentido trazer recomendações de manejo. "
+    "Para perguntas sobre uma doença específica, use get_disease_info. "
+    "Responda em português, com clareza, usando Markdown quando ajudar na leitura."
 )
 
 
@@ -162,6 +167,54 @@ def _build_tools(
         )
 
     return [analyze_image, get_action_plan, get_disease_info]
+
+
+def build_chat_tools(
+    inference_svc: InferenceService,
+    action_plan_svc: ActionPlanService,
+    diagnosis_svc: DiagnosisService,
+) -> list[BaseTool]:
+    """Tools do chat ao vivo (TCC-079) — gate de visão + análise state-aware.
+
+    Diferente do ``_build_tools`` legado, esta lista assume o ``ChatState``
+    expandido (``agent_state.ChatState``) e usa ``InjectedState`` pras tools
+    resolverem a imagem do turno via ``uploaded_files``:
+
+    - ``inspect_image``: gate de visão (planta vs. outra coisa).
+    - ``analyze_image``: roda inferência + persiste Diagnosis (state-aware).
+    - ``get_action_plan`` / ``get_disease_info``: leitura do catálogo/planos.
+    """
+    from app.domains.chat.tools.analyze_image import build_analyze_image_tool
+    from app.domains.chat.tools.get_action_plan import build_get_action_plan_tool
+    from app.domains.chat.tools.inspect_image import build_inspect_image_tool
+
+    @tool
+    def get_disease_info(disease_id: str) -> str:
+        """Retorna informações sobre uma doença a partir do catálogo interno (slug)."""
+        disease = inference_svc.get_disease_by_slug(disease_id)
+        if disease is not None:
+            return json.dumps(
+                {
+                    "id": disease.slug,
+                    "name": disease.name_pt,
+                    "scientific_name": disease.scientific_name,
+                    "severity": str(disease.severity_default),
+                    "description": disease.description_md,
+                },
+                ensure_ascii=False,
+            )
+        valid_ids = [d.slug for d in inference_svc.disease_catalog]
+        return (
+            f"Doença '{disease_id}' não encontrada no catálogo. "
+            f"IDs válidos: {', '.join(valid_ids)}."
+        )
+
+    return [
+        build_inspect_image_tool(),
+        build_analyze_image_tool(inference_svc, diagnosis_svc),
+        build_get_action_plan_tool(action_plan_svc),
+        get_disease_info,
+    ]
 
 
 def _make_llm_node(

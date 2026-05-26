@@ -336,6 +336,32 @@ uv run pytest --cov=app --cov-report=html
 start htmlcov/index.html
 ```
 
+### Smoke tests (`tests/smoke/`)
+
+Suíte de smoke que cobre **todas as rotas** sob `/api/v1` (status + auth + schema)
+e varre `app.routes` para garantir que cada router está plugado. É **mockada** e
+roda no fluxo default — sem infra nem segredos:
+
+```bash
+uv run pytest tests/smoke
+```
+
+### Testes live (agent liveness) — marker `live`
+
+`tests/smoke/test_agent_liveness.py` exercita o **chat agent** e o **diagnosis
+graph** de ponta a ponta, **sem mocks**: LLM real + Postgres real. São marcados
+com `@pytest.mark.live` e **excluídos por default** (`addopts = -m 'not live'`).
+Para rodar:
+
+```bash
+docker compose up -d db                     # sobe o Postgres
+$env:OPENAI_API_KEY = "sk-..."              # PowerShell (bash: export OPENAI_API_KEY=sk-...)
+uv run python -m scripts.seed_crops         # catálogo p/ o /analyze (uma vez)
+uv run pytest -m live -v
+```
+
+Sem a chave → skip limpo. Sem Postgres acessível → skip com instrução.
+
 **Resultado atual:** 197 testes · 100% de cobertura (linhas + branches)
 
 ### Estrutura dos testes

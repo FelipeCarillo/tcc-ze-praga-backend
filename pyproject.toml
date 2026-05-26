@@ -67,6 +67,10 @@ ignore = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = [
+    "live: testes que exigem Postgres + chave LLM reais (excluídos por default; rode com `-m live`)",
+]
 
 [tool.coverage.run]
 source = ["app"]

@@ -17,13 +17,15 @@ Helper _extract_last_message preserva fix do TCC-005 (parsing JSON robusto).
 
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.dependencies import (
     get_chat_service,
     get_current_user,
+    get_transcription_service,
     get_usage_service,
     require_quota,
 )
@@ -40,6 +42,41 @@ from app.shared.enums import FeatureTypeEnum, ModelEnum
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 sessions_router = APIRouter(prefix="/sessions", tags=["Chat"])
+
+# Limite por imagem/áudio no chat (espelha uploads/router.py).
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+async def _read_image(image: UploadFile | None) -> tuple[bytes | None, str | None, str | None]:
+    """Lê os bytes + mime + filename da imagem do turno (valida tamanho)."""
+    if image is None:
+        return None, None, None
+    data = await image.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Imagem excede o limite de {MAX_UPLOAD_BYTES // (1024 * 1024)}MB.",
+        )
+    return data, image.content_type, image.filename
+
+
+async def _transcribe_audio(audio: UploadFile | None, transcription_svc: Any) -> str | None:
+    """Transcreve o áudio do turno (se houver) e retorna o texto."""
+    if audio is None:
+        return None
+    data = await audio.read()
+    if not data:
+        return None
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Áudio excede o limite de {MAX_UPLOAD_BYTES // (1024 * 1024)}MB.",
+        )
+    return await transcription_svc.transcribe(
+        data=data,
+        filename=audio.filename or "voice.webm",
+        mime=audio.content_type or "audio/webm",
+    )
 
 
 def _extract_last_message(messages: str) -> str:
@@ -60,27 +97,34 @@ async def send_message(
     messages: str = Form(...),
     model: str = Form(default=ModelEnum.ENSEMBLE),
     image: UploadFile | None = File(default=None),
+    audio: UploadFile | None = File(default=None),
     session_id: str | None = Form(default=None),
     current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.CHAT)),
     chat_svc: ChatService = Depends(get_chat_service),
     usage_svc: UsageService = Depends(get_usage_service),
+    transcription_svc: Any = Depends(get_transcription_service),
 ) -> ChatResponse:
     await usage_svc.record_usage(
         current_user.id,
         FeatureTypeEnum.CHAT,
-        {"model": model, "has_image": image is not None},
+        {"model": model, "has_image": image is not None, "has_audio": audio is not None},
     )
 
-    message_text = _extract_last_message(messages)
-    image_filename = image.filename if image else None
+    transcript = await _transcribe_audio(audio, transcription_svc)
+    message_text = transcript if transcript else _extract_last_message(messages)
+    image_bytes, image_mime, image_filename = await _read_image(image)
 
-    return await chat_svc.chat(
+    response = await chat_svc.chat(
         user_id=current_user.id,
         session_id=session_id,
         message_text=message_text,
+        image_bytes=image_bytes,
+        image_mime=image_mime,
         image_filename=image_filename,
         model_id=model,
     )
+    response.transcript = transcript
+    return response
 
 
 @router.post("/stream", status_code=200)
@@ -88,26 +132,39 @@ async def send_message_stream(
     messages: str = Form(...),
     model: str = Form(default=ModelEnum.ENSEMBLE),
     image: UploadFile | None = File(default=None),
+    audio: UploadFile | None = File(default=None),
     session_id: str | None = Form(default=None),
     current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.CHAT)),
     chat_svc: ChatService = Depends(get_chat_service),
     usage_svc: UsageService = Depends(get_usage_service),
+    transcription_svc: Any = Depends(get_transcription_service),
 ) -> EventSourceResponse:
-    """SSE streaming endpoint — yields token/tool_call/tool_result/diagnosis/done."""
+    """SSE streaming endpoint — yields transcript/token/tool_call/tool_result/diagnosis/done."""
     await usage_svc.record_usage(
         current_user.id,
         FeatureTypeEnum.CHAT,
-        {"model": model, "has_image": image is not None, "streaming": True},
+        {
+            "model": model,
+            "has_image": image is not None,
+            "has_audio": audio is not None,
+            "streaming": True,
+        },
     )
 
-    message_text = _extract_last_message(messages)
-    image_filename = image.filename if image else None
+    transcript = await _transcribe_audio(audio, transcription_svc)
+    message_text = transcript if transcript else _extract_last_message(messages)
+    image_bytes, image_mime, image_filename = await _read_image(image)
 
     async def _event_generator() -> AsyncIterator[dict[str, str]]:
+        if transcript:
+            # Emite o texto transcrito primeiro pra UI exibir o que foi falado.
+            yield {"event": "transcript", "data": transcript}
         async for event in chat_svc.chat_stream(
             user_id=current_user.id,
             session_id=session_id,
             message_text=message_text,
+            image_bytes=image_bytes,
+            image_mime=image_mime,
             image_filename=image_filename,
             model_id=model,
         ):

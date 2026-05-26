@@ -18,15 +18,19 @@ endpoint ``POST /chat/resume``. O endpoint ``GET /chat/interrupts`` lista
 threads do usuario com interrupts pendentes.
 """
 
+import base64
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import Command
 
-from app.domains.chat.agent import build_graph
+from app.domains.chat import agent_state
+from app.domains.chat.agent import build_chat_tools, build_graph
+from app.domains.chat.agent_state import UploadedFileDTO
 from app.domains.chat.repository import ChatMessageRepository, ChatSessionRepository
 from app.domains.chat.schemas import (
     ChatResponse,
@@ -111,9 +115,12 @@ class ChatService:
                     "Checkpointer factory failed — graph runs sem persistencia"
                 )
 
+        tools = build_chat_tools(
+            self._inference_svc, self._action_plan_svc, self._diagnosis_svc
+        )
         graph = build_graph(
-            self._inference_svc,
-            self._action_plan_svc,
+            tools=tools,
+            state_schema=agent_state.ChatState,
             plan_features=plan_features,
             checkpointer=checkpointer,
         )
@@ -125,18 +132,21 @@ class ChatService:
         user_id: str,
         session_id: str | None,
         message_text: str,
+        image_bytes: bytes | None,
+        image_mime: str | None,
         image_filename: str | None,
         model_id: str,
     ) -> ChatResponse:
         """Roda o agente, persiste o turno e devolve a resposta consolidada.
 
-        Pipeline:
+        Pipeline (TCC-079):
           1) get_or_create session
           2) persist user message
-          3) (opt) se há imagem, roda inferência e persiste Diagnosis ANTES
-             do agente — assim o LLM recebe o resultado real no histórico
+          3) se há imagem, ela é disponibilizada ao agente (base64 em
+             ``uploaded_files``) — o agente decide via tools (inspect_image →
+             analyze_image) se diagnostica; NÃO forçamos mais inferência.
           4) invoke graph com mensagens + estado
-          5) persist assistant message (com diagnosis_id se houver)
+          5) persist assistant message (com diagnosis_id se o agente diagnosticou)
         """
         session = await self._session_repo.get_or_create_for_user(user_id, session_id)
 
@@ -147,28 +157,10 @@ class ChatService:
             metadata={"image_filename": image_filename} if image_filename else None,
         )
 
-        diagnosis: DiagnosisResponse | None = None
-        seed_messages = [HumanMessage(content=message_text)]
-
-        # Quando há imagem: roda inferência direto, persiste Diagnosis e injeta
-        # o resultado no histórico via HumanMessage sintética. Isso garante que
-        # o LLM (mesmo sem visão) "veja" o diagnóstico real, e que o Diagnosis
-        # seja persistido independente das decisões do agente.
-        if image_filename:
-            diagnosis = await self._run_inference_and_persist(user_id, image_filename, model_id)
-            seed_messages.append(
-                HumanMessage(
-                    content=(
-                        "[Resultado da análise da imagem]\n"
-                        f"Doença detectada: {diagnosis.disease_name}\n"
-                        f"ID: {diagnosis.disease_id}\n"
-                        f"Confiança: {diagnosis.confidence:.2%}\n"
-                        f"Severidade: {diagnosis.severity}\n"
-                        "Explique de forma amigável ao usuário e, se relevante, "
-                        "use get_action_plan pra trazer recomendações."
-                    )
-                )
-            )
+        uploaded_files = self._build_uploaded_files(image_bytes, image_mime, image_filename)
+        seed_messages = [
+            HumanMessage(content=self._seed_text(message_text, bool(uploaded_files)))
+        ]
 
         # Sprint A2.5 pre-fetch: busca diagnoses passados relevantes ao
         # conteudo da mensagem atual, alimenta o state pro LLM (e tools).
@@ -184,28 +176,26 @@ class ChatService:
             {
                 "messages": seed_messages,
                 "current_user_id": user_id,
-                "image_filename": image_filename,
-                "model_id": model_id,
-                "last_diagnosis_id": diagnosis.id if diagnosis else None,
+                "selected_model": model_id,
+                "uploaded_files": uploaded_files,
+                "diagnoses_in_turn": [],
                 "recent_relevant_diagnoses": recent_relevant,
             },
             config=config,
         )
 
         # Detecta interrupt — quando o grafo pausa via ask_user, o "result"
-        # contem o payload do interrupt em vez do estado final. Ainda assim
-        # devolvemos a sessao com diagnosis (se houve) e content vazio +
-        # info do interrupt, deixando o cliente disparar /chat/resume.
+        # contem o payload do interrupt em vez do estado final.
         interrupt_info = self._extract_interrupt_from_result(result)
         if interrupt_info is not None:
             return ChatResponse(
                 role="assistant",
                 content="",
-                diagnosis=diagnosis,
                 session_id=session.id,
                 interrupt=interrupt_info,
             )
 
+        diagnosis = await self._diagnosis_from_state(result, user_id)
         assistant_text = self._extract_final_text(result["messages"])
 
         await self._message_repo.create(
@@ -227,6 +217,8 @@ class ChatService:
         user_id: str,
         session_id: str | None,
         message_text: str,
+        image_bytes: bytes | None,
+        image_mime: str | None,
         image_filename: str | None,
         model_id: str,
     ) -> AsyncIterator[dict[str, Any]]:
@@ -236,7 +228,8 @@ class ChatService:
           - token:        chunk de texto do LLM
           - tool_call:    nome da tool sendo invocada
           - tool_result:  output da tool (string)
-          - diagnosis:    DiagnosisResponse serializado (JSON-string)
+          - diagnosis:    DiagnosisResponse serializado (JSON-string) — emitido
+                          ao final, se o agente diagnosticou via analyze_image
           - done:         marcador final
         """
         session = await self._session_repo.get_or_create_for_user(user_id, session_id)
@@ -247,28 +240,10 @@ class ChatService:
             metadata={"image_filename": image_filename} if image_filename else None,
         )
 
-        diagnosis: DiagnosisResponse | None = None
-        seed_messages = [HumanMessage(content=message_text)]
-
-        if image_filename:
-            diagnosis = await self._run_inference_and_persist(user_id, image_filename, model_id)
-            seed_messages.append(
-                HumanMessage(
-                    content=(
-                        "[Resultado da análise da imagem]\n"
-                        f"Doença detectada: {diagnosis.disease_name}\n"
-                        f"ID: {diagnosis.disease_id}\n"
-                        f"Confiança: {diagnosis.confidence:.2%}\n"
-                        f"Severidade: {diagnosis.severity}\n"
-                        "Explique de forma amigável ao usuário e, se relevante, "
-                        "use get_action_plan pra trazer recomendações."
-                    )
-                )
-            )
-            yield {
-                "event": "diagnosis",
-                "data": diagnosis.model_dump_json(),
-            }
+        uploaded_files = self._build_uploaded_files(image_bytes, image_mime, image_filename)
+        seed_messages = [
+            HumanMessage(content=self._seed_text(message_text, bool(uploaded_files)))
+        ]
 
         plan_features = await self._resolve_plan_features(user_id)
         graph = await self._get_graph(plan_features=plan_features)
@@ -276,9 +251,9 @@ class ChatService:
         initial_state = {
             "messages": seed_messages,
             "current_user_id": user_id,
-            "image_filename": image_filename,
-            "model_id": model_id,
-            "last_diagnosis_id": diagnosis.id if diagnosis else None,
+            "selected_model": model_id,
+            "uploaded_files": uploaded_files,
+            "diagnoses_in_turn": [],
         }
 
         collected_chunks: list[str] = []
@@ -318,6 +293,12 @@ class ChatService:
             # como safety net pra persistir algo coerente.
             result = await graph.ainvoke(initial_state, config=config)
             assistant_text = self._extract_final_text(result["messages"])
+
+        # Se o agente diagnosticou via analyze_image, o id ficou em
+        # ``diagnoses_in_turn`` no snapshot — carrega e emite o evento.
+        diagnosis = await self._diagnosis_from_snapshot(graph, config, user_id)
+        if diagnosis is not None:
+            yield {"event": "diagnosis", "data": diagnosis.model_dump_json()}
 
         await self._message_repo.create(
             session_id=session.id,
@@ -602,6 +583,70 @@ class ChatService:
             else ""
         )
         return await self._diagnosis_svc.create(user_id, body, crop_id=crop_uuid)
+
+    # ── TCC-079: imagem efêmera (base64) + diagnosis do turno ──────────────────
+
+    @staticmethod
+    def _build_uploaded_files(
+        image_bytes: bytes | None,
+        image_mime: str | None,
+        image_filename: str | None,
+    ) -> list[UploadedFileDTO]:
+        """Monta o ``UploadedFileDTO`` efêmero do turno (base64 in-memory).
+
+        O b64 fica SÓ em ``uploaded_files`` (estado transitório), nunca em
+        ``messages`` — assim não vaza pro checkpointer nem pro summarizer.
+        """
+        if not image_bytes:
+            return []
+        return [
+            UploadedFileDTO(
+                id=uuid4().hex,
+                original_name=image_filename or "imagem.jpg",
+                mime=image_mime or "image/jpeg",
+                storage_key="",
+                size_bytes=len(image_bytes),
+                b64=base64.b64encode(image_bytes).decode("ascii"),
+            )
+        ]
+
+    @staticmethod
+    def _seed_text(message_text: str, has_image: bool) -> str:
+        """Texto da seed message; sinaliza a imagem ao LLM sem expor os bytes."""
+        if not has_image:
+            return message_text
+        note = "[O usuário anexou uma imagem para análise.]"
+        base = (message_text or "").strip()
+        return f"{base}\n\n{note}" if base else note
+
+    async def _diagnosis_from_state(
+        self, result: Any, user_id: str
+    ) -> DiagnosisResponse | None:
+        """Carrega o Diagnosis criado no turno (analyze_image) a partir do result."""
+        ids = result.get("diagnoses_in_turn") if isinstance(result, dict) else None
+        return await self._fetch_turn_diagnosis(ids, user_id)
+
+    async def _diagnosis_from_snapshot(
+        self, graph: Any, config: dict[str, Any], user_id: str
+    ) -> DiagnosisResponse | None:
+        """Versão pro streaming: lê ``diagnoses_in_turn`` do snapshot do grafo."""
+        try:
+            snapshot = await graph.aget_state(config)
+        except Exception:  # noqa: BLE001
+            return None
+        ids = snapshot.values.get("diagnoses_in_turn") if snapshot else None
+        return await self._fetch_turn_diagnosis(ids, user_id)
+
+    async def _fetch_turn_diagnosis(
+        self, ids: list[str] | None, user_id: str
+    ) -> DiagnosisResponse | None:
+        if not ids:
+            return None
+        try:
+            return await self._diagnosis_svc.get_by_id(ids[-1], user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Falha ao carregar diagnosis %s do turno", ids[-1])
+            return None
 
     @staticmethod
     def _extract_final_text(messages: list[Any]) -> str:

@@ -18,6 +18,9 @@ class ChatResponse(BaseModel):
     content: str
     diagnosis: DiagnosisResponse | None = None
     session_id: str | None = None
+    # TCC-081: quando o turno veio de áudio, devolve o texto transcrito pra UI
+    # exibir o que foi falado.
+    transcript: str | None = None
     # Sprint A4.5: quando o agente pausa via ask_user, este campo carrega
     # o payload do interrupt e o cliente deve renderizar o dialog +
     # disparar POST /chat/resume com a resposta.

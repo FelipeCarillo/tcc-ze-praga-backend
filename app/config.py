@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     openai_embeddings_model: str = "text-embedding-3-small"
     openai_embeddings_dims: int = 1536
 
+    # Transcrição de áudio (STT) — entrada de voz no chat (TCC-081).
+    transcription_model: str = "whisper-1"
+
+    # Anthropic — usado quando ``chat_model``/``vision_model`` apontam pra
+    # ``anthropic:...``. Como ``openai_api_key``/``tavily_api_key``, declarado
+    # como campo opcional pra que uma ``ANTHROPIC_API_KEY`` no ``.env`` não
+    # estoure o ``extra=forbid`` do BaseSettings (langchain ainda lê de os.environ).
+    anthropic_api_key: str | None = None
+
     # Agent feature flags — kill-switches deploy-time pras tools V2 dormentes.
     # Default OFF; ative junto com a feature do plano (ex: identify_crop_auto)
     # pra liberar a tool no registry.
