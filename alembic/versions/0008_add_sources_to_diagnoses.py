@@ -32,10 +32,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
 revision: str = "0008_add_sources_to_diagnoses"
-down_revision: str | Sequence[str] | None = (
-    "0005_add_plan_features",
-    "0006_add_summary_to_chat_sessions",
-)
+down_revision: str | Sequence[str] | None = "0007_add_api_keys"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

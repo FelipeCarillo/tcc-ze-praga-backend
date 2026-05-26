@@ -94,7 +94,12 @@ def build_diagnosis_graph(
     )
     workflow.add_node(
         "persist",
-        partial(persist_node, diagnosis_svc=diagnosis_svc, store=store),
+        partial(
+            persist_node,
+            diagnosis_svc=diagnosis_svc,
+            inference_svc=inference_svc,
+            store=store,
+        ),
     )
 
     workflow.add_edge(START, "load_model")

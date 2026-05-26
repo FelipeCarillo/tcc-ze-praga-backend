@@ -12,9 +12,12 @@ class DiagnosisRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def create(self, user_id: str, data: CreateDiagnosisRequest) -> DiagnosisDTO:
+    async def create(
+        self, user_id: str, data: CreateDiagnosisRequest, *, crop_id: str
+    ) -> DiagnosisDTO:
         diagnosis = Diagnosis(
             user_id=user_id,
+            crop_id=crop_id,
             disease_name=data.disease_name,
             disease_id=data.disease_id,
             scientific_name=data.scientific_name,

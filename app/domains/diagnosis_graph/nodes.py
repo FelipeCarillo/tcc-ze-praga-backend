@@ -133,6 +133,7 @@ async def persist_node(
     state: DiagnosisState,
     *,
     diagnosis_svc: DiagnosisService,
+    inference_svc: InferenceService,
     store: BaseStore | None = None,
 ) -> dict:
     """Cria 1 row em ``diagnoses`` por imagem do batch e indexa no Store.
@@ -150,6 +151,15 @@ async def persist_node(
     predictions = state.get("predictions", [])
     model_id = state.get("model_id", "ensemble")
     user_id = state.get("user_id", "")
+    # ``Diagnosis.crop_id`` eh NOT NULL (migration 0004). Extrai o UUID do
+    # catalogo carregado no ``InferenceService`` — em multi-cultivo o factory
+    # ja garante que o svc esta amarrado ao crop alvo, entao todas as diseases
+    # compartilham o mesmo ``crop_id``.
+    crop_uuid = (
+        inference_svc.disease_catalog[0].crop_id
+        if inference_svc.disease_catalog
+        else ""
+    )
     # TCC-056: evidence_per_image vem do gather_evidence_node (paralelo).
     # Index alinhado com predictions — quando ausente, persistimos lista vazia.
     evidence_per_image = state.get("evidence_per_image") or []
@@ -185,7 +195,7 @@ async def persist_node(
             ],
             sources=sources,
         )
-        diag = await diagnosis_svc.create(user_id, body)
+        diag = await diagnosis_svc.create(user_id, body, crop_id=crop_uuid)
         persisted.append(diag.id)
 
         # Indexa no Store (best-effort — falhas nao quebram o grafo).

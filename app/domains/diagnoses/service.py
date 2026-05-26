@@ -15,8 +15,10 @@ class DiagnosisService:
     def __init__(self, repo: DiagnosisRepository) -> None:
         self._repo = repo
 
-    async def create(self, user_id: str, request: CreateDiagnosisRequest) -> DiagnosisResponse:
-        diagnosis = await self._repo.create(user_id, request)
+    async def create(
+        self, user_id: str, request: CreateDiagnosisRequest, *, crop_id: str
+    ) -> DiagnosisResponse:
+        diagnosis = await self._repo.create(user_id, request, crop_id=crop_id)
         return self._to_response(diagnosis)
 
     async def get_by_id(self, diagnosis_id: str, user_id: str) -> DiagnosisResponse:

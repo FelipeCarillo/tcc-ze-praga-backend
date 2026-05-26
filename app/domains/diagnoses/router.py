@@ -8,6 +8,7 @@ from app.core.dependencies import (
     get_diagnosis_graph_factory,
     get_diagnosis_repository,
     get_diagnosis_service,
+    get_inference_service,
     get_store_dep,
     get_subscription_repository,
     get_usage_repository,
@@ -15,6 +16,7 @@ from app.core.dependencies import (
     require_quota,
     require_quota_dual,
 )
+from app.domains.inference.service import InferenceService
 from app.core.exceptions import NotFoundError
 from app.domains.auth.dto import UserDTO
 from app.domains.chat.schemas import SemanticDiagnosisHit
@@ -166,8 +168,14 @@ async def create_diagnosis(
     current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.INFERENCE)),
     service: DiagnosisService = Depends(get_diagnosis_service),
     usage_svc: UsageService = Depends(get_usage_service),
+    inference_svc: InferenceService = Depends(get_inference_service),
 ) -> DiagnosisResponse:
-    result = await service.create(current_user.id, body)
+    crop_uuid = (
+        inference_svc.disease_catalog[0].crop_id
+        if inference_svc.disease_catalog
+        else ""
+    )
+    result = await service.create(current_user.id, body, crop_id=crop_uuid)
     await usage_svc.record_usage(
         current_user.id,
         FeatureTypeEnum.INFERENCE,

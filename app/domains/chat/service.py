@@ -594,7 +594,14 @@ class ChatService:
             image_name=result.image_name,
             top3=result.top3,
         )
-        return await self._diagnosis_svc.create(user_id, body)
+        # ``Diagnosis.crop_id`` eh NOT NULL desde 0004 — extrai do catalogo
+        # carregado no InferenceService (todas as diseases sao do mesmo crop).
+        crop_uuid = (
+            self._inference_svc.disease_catalog[0].crop_id
+            if self._inference_svc.disease_catalog
+            else ""
+        )
+        return await self._diagnosis_svc.create(user_id, body, crop_id=crop_uuid)
 
     @staticmethod
     def _extract_final_text(messages: list) -> str:
@@ -709,14 +716,10 @@ class ChatService:
     ) -> str:
         """Roda LLM com o prompt do rolling summary para gerar o resumo final."""
         if llm is None:
-            from langchain_openai import ChatOpenAI
-
             from app.config import settings
+            from app.core.llm import get_chat_model
 
-            llm = ChatOpenAI(
-                model=settings.openai_model,
-                api_key=settings.openai_api_key,
-            )
+            llm = get_chat_model(settings.chat_model)
 
         history = [
             HumanMessage(content=m.content)

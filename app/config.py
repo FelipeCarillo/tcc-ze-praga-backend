@@ -1,4 +1,11 @@
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Exporta as vars do ``.env`` pra ``os.environ`` no import — necessario pra que
+# o ``langchain.chat_models.init_chat_model`` encontre credenciais provider-
+# specific (``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``, ``AWS_*``, etc.) que ele
+# le direto de ``os.environ``, nao via ``Settings``.
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -20,12 +27,18 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
 
-    # OpenAI
+    # Chat models — provider-agnostic IDs no formato ``"<provider>:<model>"``.
+    # Suporta openai, anthropic, bedrock_converse, azure_openai, google_vertexai,
+    # etc. via ``langchain.chat_models.init_chat_model``.
+    chat_model: str = "openai:gpt-4o-mini"
+    vision_model: str = "openai:gpt-4o"
+
+    # OpenAI — ainda usado direto pra embeddings (ate hoje LangChain nao tem
+    # ``init_embeddings`` agnostico canonico). ``openai_api_key`` permanece
+    # legado pra outros caminhos; pra chat use ``OPENAI_API_KEY`` em ``.env``.
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5.4-mini"
     openai_embeddings_model: str = "text-embedding-3-small"
     openai_embeddings_dims: int = 1536
-    openai_vision_model: str = "gpt-4o"
 
     # Agent feature flags — kill-switches deploy-time pras tools V2 dormentes.
     # Default OFF; ative junto com a feature do plano (ex: identify_crop_auto)

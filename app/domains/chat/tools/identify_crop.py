@@ -20,11 +20,11 @@ from typing import Annotated
 
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
 from app.config import settings
+from app.core.llm import get_chat_model
 from app.domains.chat.agent_state import ChatState, resolve_image
 
 
@@ -73,7 +73,7 @@ def build_identify_crop_tool():
             "Se confidence < 0.7, use 'desconhecido' como crop_id."
         )
 
-        vision_llm = ChatOpenAI(model=settings.openai_vision_model, temperature=0)
+        vision_llm = get_chat_model(settings.vision_model, temperature=0)
         response = await vision_llm.ainvoke(
             [
                 HumanMessage(

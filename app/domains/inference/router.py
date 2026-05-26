@@ -40,7 +40,12 @@ async def run_inference(
         top3=result.top3,
     )
 
-    diagnosis = await diagnosis_svc.create(current_user.id, body)
+    crop_uuid = (
+        inference_svc.disease_catalog[0].crop_id
+        if inference_svc.disease_catalog
+        else ""
+    )
+    diagnosis = await diagnosis_svc.create(current_user.id, body, crop_id=crop_uuid)
 
     await usage_svc.record_usage(
         current_user.id,

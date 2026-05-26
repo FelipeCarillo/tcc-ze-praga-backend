@@ -26,12 +26,12 @@ from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.tools import BaseTool, tool
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.config import settings
+from app.core.llm import get_chat_model
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -225,13 +225,10 @@ def build_graph(
         tools = _build_tools(inference_svc, action_plan_svc)
 
     if llm is None:
-        model_name = (
-            plan_features.llm_model if plan_features is not None else settings.openai_model
+        model_id = (
+            plan_features.llm_model if plan_features is not None else settings.chat_model
         )
-        llm = ChatOpenAI(
-            model=model_name,
-            api_key=settings.openai_api_key,
-        )
+        llm = get_chat_model(model_id)
 
     llm_with_tools = llm.bind_tools(tools)
 

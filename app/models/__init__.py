@@ -9,6 +9,7 @@ from app.models.diagnosis import Diagnosis
 from app.models.diagnosis_top3 import DiagnosisTop3
 from app.models.disease import Disease
 from app.models.subscription_plan import SubscriptionPlan
+from app.models.talhao import Talhao
 from app.models.uploaded_file import UploadedFile
 from app.models.usage_log import UsageLog
 from app.models.user import User
@@ -24,6 +25,7 @@ __all__ = [
     "ChatSession",
     "ChatMessage",
     "SubscriptionPlan",
+    "Talhao",
     "UserSubscription",
     "UsageLog",
     "Crop",

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import AsyncSessionLocal
 from app.models.action_plan import ActionPlan
 from app.models.action_plan_source import ActionPlanSource
+from app.models.crop import Crop
 from app.models.subscription_plan import SubscriptionPlan
 
 # ── Subscription Plans ────────────────────────────────────────────────────────
@@ -272,6 +273,16 @@ async def seed_subscription_plans(db: AsyncSession) -> None:
 
 async def seed_action_plans(db: AsyncSession) -> None:
     print("Seeding action plans...")
+    # Todas as doencas do catalogo seedado pertencem a 'soja' (sprint A2).
+    # Resolve o crop_id uma vez — ``ActionPlan.crop_id`` eh NOT NULL desde
+    # a migration 0004_link_diagnoses_to_diseases.
+    crop_result = await db.execute(select(Crop).where(Crop.slug == "soja"))
+    soja_crop = crop_result.scalar_one_or_none()
+    if soja_crop is None:
+        raise RuntimeError(
+            "Crop 'soja' nao encontrada — rode 'uv run python -m scripts.seed_crops' antes."
+        )
+
     for disease in ACTION_PLANS:
         disease_id = disease["disease_id"]
 
@@ -288,7 +299,14 @@ async def seed_action_plans(db: AsyncSession) -> None:
                 print(f"  ✓ ActionPlan '{disease_id}/{level_name}' already exists, skipping.")
                 continue
 
-            db.add(ActionPlan(disease_id=disease_id, level=level_name, actions=actions))
+            db.add(
+                ActionPlan(
+                    crop_id=soja_crop.id,
+                    disease_id=disease_id,
+                    level=level_name,
+                    actions=actions,
+                )
+            )
             print(f"  + Created action plan '{disease_id}/{level_name}'")
 
         # Seed sources (idempotent by disease_id + name)

@@ -42,7 +42,7 @@ class PlanFeatures(BaseModel):
     """
 
     tier_name: str
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "openai:gpt-4o-mini"
     diagnosis_models: list[str] = ["resnet50"]
     action_plan_levels: list[str] = ["essencial"]
     allowed_crops: list[str] | None = None
@@ -66,7 +66,7 @@ class PlanFeatures(BaseModel):
 FREE_FEATURES = PlanFeatures(tier_name="free")
 PRO_FEATURES = PlanFeatures(
     tier_name="pro",
-    llm_model="gpt-4o",
+    llm_model="openai:gpt-4o",
     diagnosis_models=["resnet50", "efficientnet", "vit"],
     action_plan_levels=["essencial", "campo"],
     allowed_crops=["soja"],
@@ -75,7 +75,7 @@ PRO_FEATURES = PlanFeatures(
 )
 ENTERPRISE_FEATURES = PlanFeatures(
     tier_name="enterprise",
-    llm_model="gpt-4o",
+    llm_model="openai:gpt-4o",
     diagnosis_models=["resnet50", "efficientnet", "vit", "ensemble"],
     action_plan_levels=["essencial", "campo", "especialista"],
     allowed_crops=None,

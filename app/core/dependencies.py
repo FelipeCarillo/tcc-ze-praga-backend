@@ -174,6 +174,18 @@ def get_action_plan_service(repo=Depends(get_action_plan_repository)):  # type: 
     return ActionPlanService(repo)
 
 
+def get_talhao_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
+    from app.domains.talhoes.repository import TalhaoRepository
+
+    return TalhaoRepository(db)
+
+
+def get_talhao_service(repo=Depends(get_talhao_repository)):  # type: ignore[no-untyped-def]
+    from app.domains.talhoes.service import TalhaoService
+
+    return TalhaoService(repo)
+
+
 async def get_inference_service(  # type: ignore[no-untyped-def]
     crop_repo=Depends(get_crop_repository),
     disease_repo=Depends(get_disease_repository),
