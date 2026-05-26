@@ -16,7 +16,6 @@ from app.core.dependencies import (
     require_quota,
     require_quota_dual,
 )
-from app.domains.inference.service import InferenceService
 from app.core.exceptions import NotFoundError
 from app.domains.auth.dto import UserDTO
 from app.domains.chat.schemas import SemanticDiagnosisHit
@@ -27,6 +26,7 @@ from app.domains.diagnoses.schemas import (
     Top3PredictionSchema,
 )
 from app.domains.diagnoses.service import DiagnosisService
+from app.domains.inference.service import InferenceService
 from app.domains.usage.service import UsageService
 from app.shared.enums import FeatureTypeEnum, SeverityEnum
 from app.shared.pagination import PaginatedResponse
