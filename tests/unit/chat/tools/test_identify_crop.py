@@ -32,11 +32,11 @@ class _FakeVisionLLM:
 
 
 def _patch_llm(fake_content: str):
-    """Factory de patch — substitui ``ChatOpenAI`` no modulo da tool."""
+    """Factory de patch — substitui ``get_chat_model`` no modulo da tool."""
     fake = _FakeVisionLLM(fake_content)
     return (
         patch(
-            "app.domains.chat.tools.identify_crop.ChatOpenAI",
+            "app.domains.chat.tools.identify_crop.get_chat_model",
             return_value=fake,
         ),
         fake,

@@ -379,20 +379,20 @@ async def test_graph_get_action_plan_path(mock_inference_svc, mock_action_plan_s
 
 
 async def test_graph_with_default_chatopenai(mock_inference_svc, mock_action_plan_svc, monkeypatch):
-    """Quando llm não é passado, deve cair no ChatOpenAI da config (sem chamar de verdade)."""
-    # Substitui ChatOpenAI no módulo agent pra evitar chamada real ao OpenAI.
+    """Quando llm não é passado, deve cair no get_chat_model da config (sem chamar de verdade)."""
     from app.domains.chat import agent as agent_mod
 
     sentinel_calls = {}
 
     class _SentinelLLM:
-        def __init__(self, **kwargs):
-            sentinel_calls["init_kwargs"] = kwargs
-
         def bind_tools(self, tools):
             return FakeToolLLM(responses=[AIMessage(content="fallback")])
 
-    monkeypatch.setattr(agent_mod, "ChatOpenAI", _SentinelLLM)
+    def _fake_get_chat_model(model_id, **kwargs):
+        sentinel_calls["init_kwargs"] = {"model": model_id, **kwargs}
+        return _SentinelLLM()
+
+    monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
     graph = build_graph(mock_inference_svc, mock_action_plan_svc)
     result = await graph.ainvoke(_initial_state(user_text="oi"))
@@ -413,18 +413,19 @@ async def test_graph_uses_free_llm_model_when_plan_is_free(
     sentinel_calls = {}
 
     class _SentinelLLM:
-        def __init__(self, **kwargs):
-            sentinel_calls["init_kwargs"] = kwargs
-
         def bind_tools(self, tools):
             return FakeToolLLM(responses=[AIMessage(content="ok")])
 
-    monkeypatch.setattr(agent_mod, "ChatOpenAI", _SentinelLLM)
+    def _fake_get_chat_model(model_id, **kwargs):
+        sentinel_calls["init_kwargs"] = {"model": model_id, **kwargs}
+        return _SentinelLLM()
+
+    monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
     build_graph(
         mock_inference_svc, mock_action_plan_svc, plan_features=FREE_FEATURES
     )
-    assert sentinel_calls["init_kwargs"]["model"] == "gpt-4o-mini"
+    assert sentinel_calls["init_kwargs"]["model"] == FREE_FEATURES.llm_model
 
 
 async def test_graph_uses_pro_llm_model_when_plan_is_pro(
@@ -436,37 +437,38 @@ async def test_graph_uses_pro_llm_model_when_plan_is_pro(
     sentinel_calls = {}
 
     class _SentinelLLM:
-        def __init__(self, **kwargs):
-            sentinel_calls["init_kwargs"] = kwargs
-
         def bind_tools(self, tools):
             return FakeToolLLM(responses=[AIMessage(content="ok")])
 
-    monkeypatch.setattr(agent_mod, "ChatOpenAI", _SentinelLLM)
+    def _fake_get_chat_model(model_id, **kwargs):
+        sentinel_calls["init_kwargs"] = {"model": model_id, **kwargs}
+        return _SentinelLLM()
+
+    monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
     build_graph(
         mock_inference_svc, mock_action_plan_svc, plan_features=PRO_FEATURES
     )
-    assert sentinel_calls["init_kwargs"]["model"] == "gpt-4o"
+    assert sentinel_calls["init_kwargs"]["model"] == PRO_FEATURES.llm_model
 
 
 async def test_graph_falls_back_to_settings_when_no_plan_features(
     mock_inference_svc, mock_action_plan_svc, monkeypatch
 ):
-    """Sem plan_features, usa settings.openai_model (back-compat)."""
+    """Sem plan_features, usa settings.chat_model (back-compat)."""
     from app.domains.chat import agent as agent_mod
 
     sentinel_calls = {}
 
     class _SentinelLLM:
-        def __init__(self, **kwargs):
-            sentinel_calls["init_kwargs"] = kwargs
-
         def bind_tools(self, tools):
             return FakeToolLLM(responses=[AIMessage(content="ok")])
 
-    monkeypatch.setattr(agent_mod, "ChatOpenAI", _SentinelLLM)
+    def _fake_get_chat_model(model_id, **kwargs):
+        sentinel_calls["init_kwargs"] = {"model": model_id, **kwargs}
+        return _SentinelLLM()
+
+    monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
     build_graph(mock_inference_svc, mock_action_plan_svc, plan_features=None)
-    # Deve usar o valor do settings (que e' gpt-5.4-mini conforme config.py)
     assert sentinel_calls["init_kwargs"]["model"] is not None

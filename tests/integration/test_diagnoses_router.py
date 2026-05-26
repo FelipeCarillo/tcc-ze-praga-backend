@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from app.core.dependencies import (
     get_current_user,
     get_diagnosis_service,
+    get_inference_service,
     get_usage_service,
     require_quota,
 )
@@ -54,11 +55,27 @@ def mock_usage_svc():
 
 
 @pytest.fixture
-async def client_diag(mock_diag_svc, mock_usage_svc):
+def mock_inference_svc():
+    """Stub do InferenceService — `create_diagnosis` le `disease_catalog[0].crop_id`.
+
+    Sem o override, `get_inference_service` real chama `crop_repo.get_by_slug("soja")`
+    e dispara `SELECT FROM crops` no Postgres de teste, que nao tem a tabela.
+    """
+    from types import SimpleNamespace
+
+    svc = SimpleNamespace(
+        disease_catalog=[SimpleNamespace(crop_id="crop-uuid-soja")],
+    )
+    return svc
+
+
+@pytest.fixture
+async def client_diag(mock_diag_svc, mock_usage_svc, mock_inference_svc):
     # Override require_quota to bypass quota check
     app.dependency_overrides[require_quota(FeatureTypeEnum.INFERENCE)] = lambda: make_user_dto()
     app.dependency_overrides[get_diagnosis_service] = lambda: mock_diag_svc
     app.dependency_overrides[get_usage_service] = lambda: mock_usage_svc
+    app.dependency_overrides[get_inference_service] = lambda: mock_inference_svc
     app.dependency_overrides[get_current_user] = lambda: make_user_dto()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac

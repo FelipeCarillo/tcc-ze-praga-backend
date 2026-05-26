@@ -304,7 +304,7 @@ async def test_resolve_plan_features_parses_pro(
     )
     result = await svc._resolve_plan_features("user-1")
     assert result.tier_name == "pro"
-    assert result.llm_model == "gpt-4o"
+    assert result.llm_model == "openai:gpt-4o"
 
 
 async def test_resolve_plan_features_resilient_to_bad_features_dict(
