@@ -17,7 +17,7 @@ permitidos no ``get_action_plan``).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -76,14 +76,14 @@ class ChatState(TypedDict, total=False):
     plan_features: PlanFeatures
 
     # contexto recuperado (Store / DB) — populado em Sprint A2.5
-    recent_relevant_diagnoses: list[dict]
+    recent_relevant_diagnoses: list[dict[str, Any]]
 
     # turno atual
     uploaded_files: list[UploadedFileDTO]
 
     # progressivo
     diagnoses_in_turn: list[str]  # ids criados neste turno
-    pending_interrupt: dict | None
+    pending_interrupt: dict[str, Any] | None
 
 
 def resolve_image(state: ChatState, image_id: str) -> UploadedFileDTO | None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
@@ -17,9 +17,12 @@ from langgraph.prebuilt import InjectedState
 from app.domains.chat.agent_state import ChatState
 from app.domains.inference.repository import DiseaseRepository
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 
 def build_get_disease_info_tool(
-    db_session_factory: Callable[[], object],
+    db_session_factory: Callable[[], AsyncSession],
 ) -> BaseTool:
     """Factory pra ``get_disease_info``.
 
@@ -40,7 +43,7 @@ def build_get_disease_info_tool(
             crop_id or state.get("detected_crop_id") or "soja"
         )
 
-        async with db_session_factory() as session:  # type: ignore[union-attr]
+        async with db_session_factory() as session:
             disease_repo = DiseaseRepository(session)
             # Resolve crop_id real se passado como slug ('soja' -> uuid)
             crop_uuid = await _resolve_crop_id(session, effective_crop)
@@ -65,7 +68,7 @@ def build_get_disease_info_tool(
     return get_disease_info
 
 
-async def _resolve_crop_id(session, crop_ref: str) -> str:
+async def _resolve_crop_id(session: AsyncSession, crop_ref: str) -> str:
     """Aceita slug ou id. Cache via CropRepository.
 
     Tenta slug primeiro (caso comum: usuario/state passou "soja", "milho"...).

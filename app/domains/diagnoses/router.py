@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 
@@ -31,6 +33,13 @@ from app.domains.usage.service import UsageService
 from app.shared.enums import FeatureTypeEnum, SeverityEnum
 from app.shared.pagination import PaginatedResponse
 
+if TYPE_CHECKING:
+    from langgraph.store.postgres.aio import AsyncPostgresStore
+
+    from app.domains.diagnoses.repository import DiagnosisRepository
+    from app.domains.subscriptions.repository import SubscriptionRepository
+    from app.domains.usage.repository import UsageRepository
+
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/diagnoses", tags=["Diagnoses"])
 
@@ -43,11 +52,11 @@ async def analyze(
     model: str = Form(default="ensemble"),
     current_user: UserDTO = Depends(require_quota_dual),
     auth_method: str = Depends(auth_method_dual),
-    diagnosis_graph_factory=Depends(get_diagnosis_graph_factory),
-    diag_repo=Depends(get_diagnosis_repository),
+    diagnosis_graph_factory: Callable[[str], Any] = Depends(get_diagnosis_graph_factory),
+    diag_repo: "DiagnosisRepository" = Depends(get_diagnosis_repository),
     usage_svc: UsageService = Depends(get_usage_service),
-    usage_repo=Depends(get_usage_repository),
-    sub_repo=Depends(get_subscription_repository),
+    usage_repo: "UsageRepository" = Depends(get_usage_repository),
+    sub_repo: "SubscriptionRepository" = Depends(get_subscription_repository),
 ) -> list[DiagnosisResponse]:
     """Endpoint REST direto pra diagnostico (sem chat).
 
@@ -126,11 +135,11 @@ async def analyze(
     return responses
 
 
-async def _set_api_rate_limit_headers(  # type: ignore[no-untyped-def]
+async def _set_api_rate_limit_headers(
     response: Response,
     user_id: str,
-    usage_repo,
-    sub_repo,
+    usage_repo: "UsageRepository",
+    sub_repo: "SubscriptionRepository",
 ) -> None:
     """Anexa X-RateLimit-* na response do endpoint /analyze quando autenticado via API.
 
@@ -202,7 +211,7 @@ async def search_diagnoses_semantic(
     q: str = Query(..., min_length=1, description="Texto da busca semantica"),
     limit: int = Query(default=5, ge=1, le=50),
     current_user: UserDTO = Depends(get_current_user),
-    store=Depends(get_store_dep),
+    store: "AsyncPostgresStore" = Depends(get_store_dep),
 ) -> list[SemanticDiagnosisHit]:
     """Busca semantica em diagnoses passados via Store (TCC-048).
 
@@ -260,7 +269,7 @@ async def clear_all_diagnoses(
     confirm: bool = Query(default=False),
     current_user: UserDTO = Depends(get_current_user),
     service: DiagnosisService = Depends(get_diagnosis_service),
-) -> dict:
+) -> dict[str, Any]:
     if not confirm:
         return {"detail": "Pass ?confirm=true to delete all diagnoses"}
     deleted = await service.clear_all(current_user.id)

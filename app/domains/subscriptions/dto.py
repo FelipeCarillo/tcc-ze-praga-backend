@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -11,7 +12,7 @@ class PlanDTO:
     inference_daily_limit: int | None
     api_monthly_limit: int | None
     is_active: bool
-    features: dict | None = field(default=None)
+    features: dict[str, Any] | None = field(default=None)
 
 
 @dataclass(frozen=True)

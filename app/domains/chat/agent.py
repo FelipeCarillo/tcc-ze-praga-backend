@@ -20,6 +20,8 @@ Estado:
     consumido pelas tools novas quando o ``ChatService`` for migrado.
 """
 
+from __future__ import annotations
+
 import json
 from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
@@ -34,6 +36,10 @@ from app.config import settings
 from app.core.llm import get_chat_model
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import LanguageModelInput
+    from langchain_core.runnables import Runnable
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph._node import StateNode
     from langgraph.graph.state import CompiledStateGraph
 
     from app.domains.action_plans.service import ActionPlanService
@@ -64,8 +70,8 @@ class ChatState(TypedDict):
 
 
 def _build_tools(
-    inference_svc: "InferenceService",
-    action_plan_svc: "ActionPlanService",
+    inference_svc: InferenceService,
+    action_plan_svc: ActionPlanService,
 ) -> list[Any]:
     """Cria as 3 tools legacy fechando sobre os services injetados.
 
@@ -158,7 +164,9 @@ def _build_tools(
     return [analyze_image, get_action_plan, get_disease_info]
 
 
-def _make_llm_node(llm_with_tools):  # type: ignore[no-untyped-def]
+def _make_llm_node(
+    llm_with_tools: Runnable[LanguageModelInput, BaseMessage],
+) -> StateNode[ChatState]:
     """Cria o nó do LLM que injeta o SystemPrompt no início, se ausente."""
 
     async def llm_node(state: ChatState) -> dict[str, list[BaseMessage]]:
@@ -173,15 +181,15 @@ def _make_llm_node(llm_with_tools):  # type: ignore[no-untyped-def]
 
 
 def build_graph(
-    inference_svc: "InferenceService | None" = None,
-    action_plan_svc: "ActionPlanService | None" = None,
+    inference_svc: InferenceService | None = None,
+    action_plan_svc: ActionPlanService | None = None,
     llm: BaseChatModel | None = None,
-    checkpointer=None,  # type: ignore[no-untyped-def]
+    checkpointer: BaseCheckpointSaver[Any] | None = None,
     tools: list[BaseTool] | None = None,
     state_schema: type | None = None,
     summarize_llm: BaseChatModel | None = None,
-    plan_features: "PlanFeatures | None" = None,
-) -> "CompiledStateGraph":
+    plan_features: PlanFeatures | None = None,
+) -> CompiledStateGraph[Any]:
     """Monta e compila o grafo do Zé Praga.
 
     Modo legado (TCC-009): passa ``inference_svc`` + ``action_plan_svc`` e o
@@ -233,7 +241,7 @@ def build_graph(
     llm_with_tools = llm.bind_tools(tools)
 
     schema = state_schema or ChatState
-    workflow: StateGraph = StateGraph(schema)
+    workflow: StateGraph[Any] = StateGraph(schema)
 
     # Sprint A2.5: rolling summary antes do LLM pra controlar custo/contexto.
     from functools import partial

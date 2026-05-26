@@ -11,7 +11,7 @@ router = APIRouter(prefix="/action-plans", tags=["Action Plans"])
 @router.get("/{disease_id}", response_model=ActionPlanResponse)
 async def get_action_plan(
     disease_id: str,
-    _=Depends(get_current_user),
+    _: object = Depends(get_current_user),
     service: ActionPlanService = Depends(get_action_plan_service),
 ) -> ActionPlanResponse:
     return await service.get_by_disease(disease_id)
@@ -21,7 +21,7 @@ async def get_action_plan(
 async def get_action_plan_level(
     disease_id: str,
     level: ActionPlanLevelEnum,
-    _=Depends(get_current_user),
+    _: object = Depends(get_current_user),
     service: ActionPlanService = Depends(get_action_plan_service),
 ) -> ActionPlanLevelResponse:
     return await service.get_level(disease_id, level)

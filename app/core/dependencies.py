@@ -1,4 +1,5 @@
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, Header
 from fastapi.security import OAuth2PasswordBearer
@@ -13,6 +14,9 @@ from app.domains.auth.dto import UserDTO
 from app.domains.auth.repository import UserRepository
 from app.domains.auth.service import AuthService
 from app.shared.enums import FeatureTypeEnum
+
+if TYPE_CHECKING:
+    from app.domains.usage.service import UsageService
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -356,10 +360,10 @@ async def auth_method_dual(
 # ── Quota ─────────────────────────────────────────────────────────────────────
 
 
-def require_quota(feature: FeatureTypeEnum):  # type: ignore[no-untyped-def]
+def require_quota(feature: FeatureTypeEnum) -> Callable[..., Awaitable[UserDTO]]:
     async def _dependency(
         current_user: UserDTO = Depends(get_current_user),
-        usage_svc=Depends(get_usage_service),
+        usage_svc: "UsageService" = Depends(get_usage_service),
     ) -> UserDTO:
         await usage_svc.check_quota(current_user.id, feature)
         return current_user

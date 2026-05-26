@@ -51,7 +51,7 @@ def build_diagnosis_graph(
     store: BaseStore | None = None,
     tavily_search: SearchCallable | None = None,
     scielo_search: SearchCallable | None = None,
-) -> CompiledStateGraph:
+) -> CompiledStateGraph[DiagnosisState]:
     """Compila o sub-grafo de diagnostico com os services injetados.
 
     Args:
@@ -71,7 +71,7 @@ def build_diagnosis_graph(
     Returns:
         ``CompiledStateGraph`` pronto pra ``.ainvoke()``.
     """
-    workflow: StateGraph = StateGraph(DiagnosisState)
+    workflow: StateGraph[DiagnosisState] = StateGraph(DiagnosisState)
 
     workflow.add_node(
         "load_model", partial(load_model_node, inference_svc=inference_svc)

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from app.shared.enums import FeatureTypeEnum
 
@@ -22,4 +23,4 @@ class UsageLogDTO:
     id: str
     feature: FeatureTypeEnum
     used_at: datetime
-    metadata: dict | None
+    metadata: dict[str, Any] | None

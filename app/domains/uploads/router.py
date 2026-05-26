@@ -40,13 +40,13 @@ async def create_uploads(
 ) -> list[UploadResponse]:
     if not files:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Pelo menos um arquivo e' necessario.",
         )
 
     if len(files) > MAX_FILES_PER_REQUEST:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Maximo {MAX_FILES_PER_REQUEST} arquivos por request "
                 f"(recebido: {len(files)})."
@@ -58,7 +58,7 @@ async def create_uploads(
         data = await file.read()
         if len(data) > MAX_FILE_SIZE_BYTES:
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=(
                     f"Arquivo '{file.filename}' excede o limite de "
                     f"{MAX_FILE_SIZE_BYTES // (1024 * 1024)}MB."

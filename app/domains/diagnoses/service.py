@@ -1,3 +1,5 @@
+from typing import Any, Literal
+
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.domains.diagnoses.dto import DiagnosisDTO
 from app.domains.diagnoses.repository import DiagnosisRepository
@@ -79,16 +81,17 @@ class DiagnosisService:
         )
 
 
-def _safe_source(raw: dict) -> DiagnosisSourceSchema:
+def _safe_source(raw: dict[str, Any]) -> DiagnosisSourceSchema:
     """Constroi DiagnosisSourceSchema tolerando campos extras/faltantes.
 
     JSONB do DB pode ter shape ligeiramente diferente do schema (versoes
     antigas, dados injetados manualmente). Faz fallback pra ``type=web`` e
     string vazia em campos obrigatorios ausentes.
     """
-    src_type = raw.get("type")
-    if src_type not in {"web", "scientific"}:
-        src_type = "web"
+    raw_type = raw.get("type")
+    src_type: Literal["web", "scientific"] = (
+        raw_type if raw_type in {"web", "scientific"} else "web"
+    )
     return DiagnosisSourceSchema(
         type=src_type,
         url=raw.get("url", "") or "",

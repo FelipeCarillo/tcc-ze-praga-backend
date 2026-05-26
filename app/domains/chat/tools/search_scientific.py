@@ -59,7 +59,7 @@ def build_search_scientific_tool() -> BaseTool:
         full_query = f"{query} {crop_context}" if crop_context else query
 
         cache_key = make_cache_key("search_scientific", full_query, max_results)
-        cached = get_cached(cache_key)
+        cached: str | None = get_cached(cache_key)
         if cached is not None:
             return cached
 
@@ -93,7 +93,7 @@ def build_search_scientific_tool() -> BaseTool:
     return search_scientific
 
 
-def _extract_articles(data: Any) -> list[dict]:
+def _extract_articles(data: Any) -> list[dict[str, Any]]:
     """Extrai lista de articles de payload SciELO com varios formatos possiveis.
 
     SciELO pode retornar Solr ({"response": {"docs": [...]}}), top-level docs,
@@ -125,7 +125,7 @@ def _extract_articles(data: Any) -> list[dict]:
     return []
 
 
-def _format_article(a: dict) -> dict:
+def _format_article(a: dict[str, Any]) -> dict[str, Any]:
     """Normaliza dict de artigo pra schema final.
 
     Defensive: campos podem nao existir ou vir como listas; retorna strings

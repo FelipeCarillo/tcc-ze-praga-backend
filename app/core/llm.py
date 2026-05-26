@@ -64,4 +64,5 @@ def get_chat_model(model_id: str, **kwargs: Any) -> BaseChatModel:
     Returns:
         ``BaseChatModel`` ja configurado — pronto pra ``ainvoke`` / ``bind_tools``.
     """
-    return init_chat_model(_normalize_model_id(model_id), **kwargs)
+    model: BaseChatModel = init_chat_model(_normalize_model_id(model_id), **kwargs)
+    return model

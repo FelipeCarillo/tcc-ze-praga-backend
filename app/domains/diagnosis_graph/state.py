@@ -22,7 +22,7 @@ TCC-055 adicionou:
 
 from __future__ import annotations
 
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -37,15 +37,15 @@ class DiagnosisState(TypedDict, total=False):
     image_batch: list[str]  # base64 ou storage_keys
     image_ids: list[str]
     model_id: str
-    plan_features: dict  # TCC-055 — serializado das PlanFeatures (le no gather_evidence)
+    plan_features: dict[str, Any]  # TCC-055 — serializado das PlanFeatures (le no gather_evidence)
 
     # ── opcional (caso o invocador queira propagar mensagens) ────────────────
     messages: Annotated[list[BaseMessage], add_messages]
 
     # ── progressivos ──────────────────────────────────────────────────────────
-    predictions: list[dict]  # [{disease_id, confidence, top_k_logits}, ...]
-    diseases: list[dict]  # resolved Disease DTOs
-    action_plans: list[dict]  # plans por imagem
-    evidence_per_image: list[list[dict]]  # TCC-055 — evidencia externa por predicao
+    predictions: list[dict[str, Any]]  # [{disease_id, confidence, top_k_logits}, ...]
+    diseases: list[dict[str, Any]]  # resolved Disease DTOs
+    action_plans: list[dict[str, Any]]  # plans por imagem
+    evidence_per_image: list[list[dict[str, Any]]]  # TCC-055 — evidencia externa por predicao
     persisted_ids: list[str]  # ids dos diagnoses criados
-    errors: list[dict]  # erros por imagem
+    errors: list[dict[str, Any]]  # erros por imagem

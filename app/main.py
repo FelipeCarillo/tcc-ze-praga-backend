@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -110,5 +111,5 @@ app.include_router(usage_router, prefix=API_PREFIX)
 
 
 @app.get(f"{API_PREFIX}/health", tags=["Health"])
-async def health() -> dict:
+async def health() -> dict[str, Any]:
     return {"status": "healthy", "version": "1.0.0"}

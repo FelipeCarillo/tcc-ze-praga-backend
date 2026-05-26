@@ -59,7 +59,7 @@ class ChatService:
         diagnosis_svc: "DiagnosisService",
         store_factory: Callable[[], Awaitable["BaseStore"]] | None = None,
         checkpointer_factory: (
-            Callable[[], Awaitable["BaseCheckpointSaver"]] | None
+            Callable[[], Awaitable["BaseCheckpointSaver[Any]"]] | None
         ) = None,
         sub_repo: "SubscriptionRepository | None" = None,
     ) -> None:
@@ -550,7 +550,7 @@ class ChatService:
 
     @staticmethod
     async def _extract_pending_interrupt(
-        graph: Any, config: dict
+        graph: Any, config: dict[str, Any]
     ) -> InterruptInfo | None:
         """Consulta o snapshot pra detectar interrupt pendente apos streaming."""
         try:
@@ -604,7 +604,7 @@ class ChatService:
         return await self._diagnosis_svc.create(user_id, body, crop_id=crop_uuid)
 
     @staticmethod
-    def _extract_final_text(messages: list) -> str:
+    def _extract_final_text(messages: list[Any]) -> str:
         """Pega o conteúdo do último AIMessage no histórico."""
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.content:
@@ -634,7 +634,7 @@ class ChatService:
 
     async def _prefetch_relevant_diagnoses(
         self, user_id: str, query: str, limit: int = 3
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Pre-busca diagnoses passados relevantes pra o turno atual.
 
         Best-effort: erros do Store ou ausencia de factory retornam [].
@@ -712,7 +712,7 @@ class ChatService:
         )
 
     async def _generate_session_summary(
-        self, messages: list, llm: Any = None
+        self, messages: list[Any], llm: Any = None
     ) -> str:
         """Roda LLM com o prompt do rolling summary para gerar o resumo final."""
         if llm is None:

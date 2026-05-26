@@ -68,7 +68,7 @@ def build_search_web_tool() -> BaseTool:
 
         # Cache 24h — chave baseada em (query, max_results) ja contextualizada.
         cache_key = make_cache_key("search_web", full_query, max_results)
-        cached = get_cached(cache_key)
+        cached: str | None = get_cached(cache_key)
         if cached is not None:
             return cached
 

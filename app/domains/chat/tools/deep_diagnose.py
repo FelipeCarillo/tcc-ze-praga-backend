@@ -13,16 +13,19 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
 from app.domains.chat.agent_state import ChatState
 
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
+
 
 def build_deep_diagnose_tool(
-    diagnosis_graph_factory: Callable[[str], object],
+    diagnosis_graph_factory: Callable[[str], CompiledStateGraph[Any]],
 ) -> BaseTool:
     """Factory pra ``deep_diagnose`` — recebe closure que cria o sub-grafo por crop.
 
@@ -68,7 +71,7 @@ def build_deep_diagnose_tool(
         user_id = state.get("current_user_id") or ""
         model_id = state.get("selected_model") or "ensemble"
 
-        result = await graph.ainvoke(  # type: ignore[union-attr]
+        result = await graph.ainvoke(
             {
                 "user_id": user_id,
                 "crop_id": effective_crop,

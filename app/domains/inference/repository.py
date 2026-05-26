@@ -83,8 +83,9 @@ class CropRepository:
         self._db = db
 
     async def list_active(self) -> list[CropDTO]:
-        if type(self)._cache_active is not None:
-            return type(self)._cache_active
+        cached = type(self)._cache_active
+        if cached is not None:
+            return cached
 
         result = await self._db.execute(select(Crop).where(Crop.is_active.is_(True)))
         dtos = [CropDTO.from_orm(c) for c in result.scalars().all()]

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.domains.uploads.repository import UploadedFileRepository
 from app.models.uploaded_file import UploadedFile
@@ -26,7 +26,7 @@ class StorageUploader(Protocol):
 class SupabaseStorageUploader:
     """Implementacao real wrapando o client do Supabase."""
 
-    def __init__(self, client, bucket: str = "uploads") -> None:
+    def __init__(self, client: Any, bucket: str = "uploads") -> None:
         self._client = client
         self._bucket = bucket
 

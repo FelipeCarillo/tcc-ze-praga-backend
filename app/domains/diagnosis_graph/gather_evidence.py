@@ -23,6 +23,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from app.domains.diagnosis_graph.state import DiagnosisState
 
@@ -36,7 +37,7 @@ async def gather_evidence_node(
     *,
     tavily_search: SearchCallable | None = None,
     scielo_search: SearchCallable | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Coleta evidencia externa pra cada predicao do batch.
 
     Args:
@@ -52,7 +53,7 @@ async def gather_evidence_node(
         ``predictions``. Cada elemento eh lista de resultados (web+scientific
         mesclados). Tier que nao habilita nenhuma busca retorna ``[]``.
     """
-    plan_features: dict = state.get("plan_features") or {}
+    plan_features: dict[str, Any] = state.get("plan_features") or {}
     want_web = bool(plan_features.get("search_web")) and tavily_search is not None
     want_scientific = (
         bool(plan_features.get("search_scientific")) and scielo_search is not None
@@ -62,7 +63,7 @@ async def gather_evidence_node(
         return {"evidence_per_image": []}
 
     crop_id = state.get("crop_id", "")
-    evidence_per_image: list[list[dict]] = []
+    evidence_per_image: list[list[dict[str, Any]]] = []
     for pred in state.get("predictions", []):
         disease_name = pred.get("disease_name") or pred.get("disease_id") or ""
         query = f"{disease_name} {crop_id} manejo".strip()
@@ -73,7 +74,7 @@ async def gather_evidence_node(
             tasks.append(scielo_search(query))  # type: ignore[misc]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        merged: list[dict] = []
+        merged: list[dict[str, Any]] = []
         for r in raw_results:
             if isinstance(r, BaseException):
                 logger.warning("gather_evidence sub-call failed: %s", r)
@@ -86,7 +87,7 @@ async def gather_evidence_node(
     return {"evidence_per_image": evidence_per_image}
 
 
-def _parse_json_payload(raw: str) -> list[dict] | dict | None:
+def _parse_json_payload(raw: str) -> list[dict[str, Any]] | dict[str, Any] | None:
     """Decodifica payload JSON da tool — tolera string nao-JSON."""
     if not isinstance(raw, str):
         return None

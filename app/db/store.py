@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from app.config import settings
 
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from langgraph.store.postgres.aio import AsyncPostgresStore
+    from langgraph.store.postgres.base import PostgresIndexConfig
 
 
 # ── Singleton holder ──────────────────────────────────────────────────────────
@@ -52,13 +53,14 @@ def _make_conn_string() -> str:
     return url
 
 
-def _build_index_config() -> dict:
+def _build_index_config() -> PostgresIndexConfig:
     """Constroi o ``PostgresIndexConfig`` pra vector search."""
     from langchain_openai import OpenAIEmbeddings
+    from pydantic import SecretStr
 
     embeddings = OpenAIEmbeddings(
         model=settings.openai_embeddings_model,
-        api_key=settings.openai_api_key,
+        api_key=SecretStr(settings.openai_api_key) if settings.openai_api_key else None,
     )
     return {
         "dims": settings.openai_embeddings_dims,
@@ -111,9 +113,9 @@ async def get_store() -> AsyncPostgresStore:
             _store_holder["store"] = store
             _store_holder["cm"] = cm
 
-    store = _store_holder["store"]
-    assert store is not None
-    return store  # type: ignore[return-value]
+    active = _store_holder["store"]
+    assert active is not None
+    return cast("AsyncPostgresStore", active)
 
 
 async def close_store() -> None:

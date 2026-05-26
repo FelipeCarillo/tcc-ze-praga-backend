@@ -16,10 +16,10 @@ Flag de feature: a tool so' eh registrada/ativada quando
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.messages import HumanMessage
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
@@ -28,7 +28,7 @@ from app.core.llm import get_chat_model
 from app.domains.chat.agent_state import ChatState, resolve_image
 
 
-def build_identify_crop_tool():
+def build_identify_crop_tool() -> BaseTool:
     """Factory pra ``identify_crop`` — sem deps externas (LLM e' instanciado dentro).
 
     A factory permite mockar o LLM em testes via patch direto de ``ChatOpenAI``
@@ -44,7 +44,7 @@ def build_identify_crop_tool():
         image_id: str,
         *,
         state: Annotated[ChatState, InjectedState],
-    ) -> Command:
+    ) -> Command[Any]:
         """Identifica cultivo agricola na imagem via visao computacional (V2 multi-cultivo).
 
         Use SEMPRE como primeira tool quando usuario envia imagem e cultivo nao
@@ -91,13 +91,16 @@ def build_identify_crop_tool():
         )
 
         try:
-            result = json.loads(response.content)
+            raw_content = (
+                response.content if isinstance(response.content, str) else ""
+            )
+            result = json.loads(raw_content)
             crop_id = result.get("crop_id", "desconhecido")
             confidence = float(result.get("confidence", 0.0))
         except (json.JSONDecodeError, ValueError, KeyError, TypeError):
             return Command(update={"messages": []})
 
-        update_state: dict = {}
+        update_state: dict[str, Any] = {}
         if crop_id != "desconhecido" and confidence >= 0.7:
             update_state["detected_crop_id"] = crop_id
         return Command(update=update_state)

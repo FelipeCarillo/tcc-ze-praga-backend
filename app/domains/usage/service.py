@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.core.exceptions import QuotaExceededError
 from app.domains.subscriptions.repository import SubscriptionRepository
 from app.domains.usage.repository import UsageRepository
@@ -38,7 +40,7 @@ class UsageService:
         self,
         user_id: str,
         feature: FeatureTypeEnum,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         await self._usage_repo.record(user_id, feature, metadata)
 

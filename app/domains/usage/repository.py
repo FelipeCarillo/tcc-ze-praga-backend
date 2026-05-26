@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +40,7 @@ class UsageRepository:
         self,
         user_id: str,
         feature: FeatureTypeEnum,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> UsageLogDTO:
         log = UsageLog(user_id=user_id, feature=feature, metadata_=metadata)
         self._db.add(log)

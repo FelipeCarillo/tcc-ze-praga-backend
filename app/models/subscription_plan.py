@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
@@ -18,7 +19,7 @@ class SubscriptionPlan(Base):
     api_monthly_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # PlanFeatures serializado (TCC-049). None = sem features definidas (legacy).
-    features: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    features: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     subscriptions: Mapped[list["UserSubscription"]] = relationship(  # type: ignore[name-defined] # noqa: F821
         back_populates="plan"

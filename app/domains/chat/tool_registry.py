@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.tools import BaseTool
 
@@ -156,7 +157,7 @@ def get_registry() -> list[ToolConfig]:
 
 
 def get_active_tool_names(
-    plan_features: dict | None = None,
+    plan_features: dict[str, Any] | None = None,
 ) -> list[str]:
     """Filtra tools por flag global + features + tier.
 
@@ -190,7 +191,7 @@ def get_active_tool_names(
 
 def build_tools(
     factories: dict[str, Callable[[], BaseTool]],
-    plan_features: dict | None = None,
+    plan_features: dict[str, Any] | None = None,
 ) -> list[BaseTool]:
     """Constroi as tools ativas usando factories injetadas.
 

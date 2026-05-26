@@ -4,6 +4,8 @@ Pattern alinhado com diagnoses/repository.py — async, retorna DTOs, commit
 explícito em cada operação de escrita.
 """
 
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -93,7 +95,7 @@ class ChatMessageRepository:
         role: str,
         content: str,
         diagnosis_id: str | None = None,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ChatMessageDTO:
         message = ChatMessage(
             session_id=session_id,

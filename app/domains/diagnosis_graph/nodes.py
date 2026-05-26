@@ -12,7 +12,7 @@ Em Sprint A2 o ``run_inference_node`` ainda usa o mock de ``InferenceService.pre
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.domains.chat.memory import index_diagnosis_in_store
 from app.domains.diagnoses.schemas import (
@@ -37,7 +37,7 @@ async def load_model_node(
     state: DiagnosisState,
     *,
     inference_svc: InferenceService,
-) -> dict:
+) -> dict[str, Any]:
     """Placeholder pra inicializacao do modelo + validacao do crop_id.
 
     Em Sprint A2 mantemos no-op: o ``InferenceService`` ja foi instanciado
@@ -56,7 +56,7 @@ async def run_inference_node(
     state: DiagnosisState,
     *,
     inference_svc: InferenceService,
-) -> dict:
+) -> dict[str, Any]:
     """Roda predict pra cada imagem do batch e populates ``predictions``.
 
     Em Sprint A2 ``InferenceService.predict`` continua sincrono (mock random);
@@ -64,7 +64,7 @@ async def run_inference_node(
     o service deve expor ``predict_batch_async`` e este node fara await
     em uma chamada batch.
     """
-    predictions: list[dict] = []
+    predictions: list[dict[str, Any]] = []
     for image_id in state.get("image_ids", []):
         result = inference_svc.predict(
             model_id=state.get("model_id", "ensemble"),
@@ -99,13 +99,13 @@ async def compose_action_plan_node(
     state: DiagnosisState,
     *,
     action_plan_svc: ActionPlanService,
-) -> dict:
+) -> dict[str, Any]:
     """Busca plano de acao por disease detectado.
 
     Em Sprint A2 retorna todos os niveis. A filtragem por ``preferred_action_level``
     (vinda do ChatState) entra em Sprint A3 quando PlanFeatures existir.
     """
-    plans: list[dict] = []
+    plans: list[dict[str, Any]] = []
     for pred in state.get("predictions", []):
         disease_id = pred["disease_id"]
         try:
@@ -135,7 +135,7 @@ async def persist_node(
     diagnosis_svc: DiagnosisService,
     inference_svc: InferenceService,
     store: BaseStore | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Cria 1 row em ``diagnoses`` por imagem do batch e indexa no Store.
 
     Args:
@@ -211,7 +211,7 @@ async def persist_node(
 
 
 def _build_diagnosis_sources(
-    raw_sources: list[dict],
+    raw_sources: list[dict[str, Any]],
 ) -> list[DiagnosisSourceSchema]:
     """Converte evidencia bruta (gather_evidence) em DiagnosisSourceSchema.
 

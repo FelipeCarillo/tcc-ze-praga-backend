@@ -8,6 +8,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from app.db import store as store_module
 
@@ -74,9 +75,13 @@ def test_build_index_config_uses_settings(monkeypatch):
     ) as embed_cls:
         cfg = store_module._build_index_config()
 
-    embed_cls.assert_called_once_with(
-        model="test-embed-model", api_key="sk-test"
-    )
+    # api_key e' embrulhado em SecretStr pra casar com o tipo esperado pelo
+    # OpenAIEmbeddings (SecretStr | Callable | None) — multi-provider refactor.
+    assert embed_cls.call_count == 1
+    call_kwargs = embed_cls.call_args.kwargs
+    assert call_kwargs["model"] == "test-embed-model"
+    assert isinstance(call_kwargs["api_key"], SecretStr)
+    assert call_kwargs["api_key"].get_secret_value() == "sk-test"
     assert cfg["dims"] == 1024
     assert cfg["embed"] is fake_embeddings_instance
     assert cfg["fields"] == ["summary_text"]

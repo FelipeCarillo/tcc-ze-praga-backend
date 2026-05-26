@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -11,7 +12,7 @@ class PlanResponse(BaseModel):
     inference_daily_limit: int | None
     api_monthly_limit: int | None
     # PlanFeatures como dict serializado — frontend consome via FeaturesContext (TCC-052).
-    features: dict | None = None
+    features: dict[str, Any] | None = None
 
 
 class SubscribeRequest(BaseModel):

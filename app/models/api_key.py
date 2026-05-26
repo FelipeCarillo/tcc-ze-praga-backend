@@ -29,7 +29,7 @@ class ApiKey(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     key_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     key_prefix: Mapped[str] = mapped_column(String(12), nullable=False, index=True)
-    scopes: Mapped[list] = mapped_column(
+    scopes: Mapped[list[str]] = mapped_column(
         JSON, default=lambda: ["diagnoses:analyze"], nullable=False
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

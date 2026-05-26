@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from app.config import settings
 
@@ -89,9 +89,9 @@ async def get_checkpointer() -> AsyncPostgresSaver:
             _holder["checkpointer"] = saver
             _holder["cm"] = cm
 
-    saver = _holder["checkpointer"]
-    assert saver is not None
-    return saver  # type: ignore[return-value]
+    active = _holder["checkpointer"]
+    assert active is not None
+    return cast("AsyncPostgresSaver", active)
 
 
 async def close_checkpointer() -> None:

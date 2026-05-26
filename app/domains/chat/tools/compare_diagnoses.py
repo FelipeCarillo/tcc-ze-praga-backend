@@ -18,16 +18,19 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
 from app.domains.chat.agent_state import ChatState, resolve_image
 
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
+
 
 def build_compare_diagnoses_tool(
-    diagnosis_graph_factory: Callable[[str], object],
+    diagnosis_graph_factory: Callable[[str], CompiledStateGraph[Any]],
 ) -> BaseTool:
     """Factory pra ``compare_diagnoses`` — recebe closure cacheada por crop.
 
@@ -83,9 +86,9 @@ def build_compare_diagnoses_tool(
         user_id = state.get("current_user_id") or ""
 
         # Invoca o sub-grafo uma vez por modelo, em paralelo via asyncio.gather.
-        async def _run_with_model(model_id: str) -> dict:
+        async def _run_with_model(model_id: str) -> dict[str, Any]:
             try:
-                result = await graph.ainvoke(  # type: ignore[union-attr]
+                result = await graph.ainvoke(
                     {
                         "user_id": user_id,
                         "crop_id": effective_crop,

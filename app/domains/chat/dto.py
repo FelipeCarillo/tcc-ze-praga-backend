@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -20,4 +21,4 @@ class ChatMessageDTO:
     content: str
     diagnosis_id: str | None
     created_at: datetime
-    metadata: dict | None
+    metadata: dict[str, Any] | None

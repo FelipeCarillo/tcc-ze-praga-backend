@@ -23,7 +23,7 @@ suporta `RemoveMessage` por id pra remover seletivamente.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import RemoveMessage, SystemMessage
 
@@ -48,7 +48,7 @@ async def maybe_summarize_node(
     state: ChatState,
     *,
     llm: BaseChatModel,
-) -> dict:
+) -> dict[str, Any]:
     """Compress historico longo via LLM, mantendo as ultimas 10 mensagens.
 
     Quando ``len(messages) > 20``, gera um resumo das mensagens iniciais e
@@ -94,9 +94,9 @@ async def maybe_summarize_node(
     # ``keep`` reaparecem com mesmos ids — add_messages dedup-ara por id
     # mas o RemoveMessage primeiro garante a limpeza.
     remove_updates = [
-        RemoveMessage(id=msg.id)
+        RemoveMessage(id=msg_id)
         for msg in messages
-        if getattr(msg, "id", None) is not None
+        if (msg_id := getattr(msg, "id", None)) is not None
     ]
 
     return {"messages": [*remove_updates, summary_msg, *keep]}
