@@ -137,8 +137,10 @@ async def test_run_inference_returns_diagnosis(
     assert body["disease_id"] == "ferrugem-asiatica"
     assert body["disease_name"] == "Ferrugem Asiática"
 
-    # Service chamado com filename + model corretos
-    mock_inference_svc.predict.assert_called_once_with("ensemble", "folha.jpg")
+    # Service chamado com filename + model + bytes da imagem (TCC-023)
+    mock_inference_svc.predict.assert_called_once_with(
+        "ensemble", "folha.jpg", image_bytes=b"\x89PNG"
+    )
 
     # Diagnose persistido com payload do InferenceResult
     mock_diagnosis_svc.create.assert_awaited_once()
@@ -164,4 +166,6 @@ async def test_run_inference_with_alternate_model(client_inference, mock_inferen
     r = await client_inference.post("/api/v1/inference", data=data, files=files)
 
     assert r.status_code == 201
-    mock_inference_svc.predict.assert_called_once_with("vit", "imagem.png")
+    mock_inference_svc.predict.assert_called_once_with(
+        "vit", "imagem.png", image_bytes=b"\x89PNG"
+    )

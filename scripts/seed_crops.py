@@ -60,14 +60,15 @@ DISEASES_BY_CROP: dict[str, list[dict]] = {
             ),
         },
         {
-            "slug": "antracnose",
-            "name_pt": "Antracnose",
-            "scientific_name": "Colletotrichum truncatum",
+            "slug": "mancha-olho-de-ra",
+            "name_pt": "Mancha Olho-de-rã",
+            "scientific_name": "Cercospora sojina",
             "severity_default": SeverityEnum.MEDIA.value,
             "description_md": (
-                "Doença fúngica que afeta hastes, vagens e sementes, causando lesões escuras e "
-                "deprimidas. Pode causar morte de plântulas e apodrecimento de vagens, reduzindo "
-                "a qualidade e quantidade dos grãos."
+                "Doença fúngica (frogeye leaf spot) com lesões circulares de centro acinzentado "
+                "e borda avermelhada que lembram um olho de rã. Reduz a área fotossintética e a "
+                "produtividade. Substitui a antracnose no catálogo a partir do ADR-0003 (dataset "
+                "ASDID, no qual a antracnose não tem cobertura)."
             ),
         },
         {

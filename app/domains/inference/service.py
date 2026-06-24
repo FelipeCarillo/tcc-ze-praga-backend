@@ -1,32 +1,55 @@
-"""InferenceService — orquestrador do mock de CNN/ViT da soja.
+"""InferenceService — inferência de doenças foliares da soja.
 
-A partir do epic TCC-025 o catalogo de doencas mora no banco (tabela ``diseases``)
-e nao mais como ``ClassVar``. O service recebe um snapshot do catalogo
-(``diseases: list[DiseaseDTO]``) por injecao na construcao — populado pelo
-factory ``get_inference_service`` que usa ``DiseaseRepository.list_by_crop()``.
+A partir do TCC-023 (ADR-0003) o service usa um **modelo ONNX real**
+(EfficientNet-B4 treinado no ASDID) quando um ``OnnxClassifier`` é injetado e os
+bytes da imagem estão disponíveis. Caso contrário — sem classifier, sem bytes, ou
+erro de inferência — cai no **mock** (comportamento anterior), garantindo que o
+fluxo nunca quebra (graceful degradation).
 
-``predict()`` continua sincrono para nao mudar a assinatura do tool do agent
-LangGraph. ``crop_id`` na assinatura permite multi-cultivo no futuro (sprint A2),
-mas hoje o catalogo passado ja' filtra so as doencas da soja.
+O catálogo de doenças mora no banco (tabela ``diseases``) e é injetado como
+snapshot (``diseases: list[DiseaseDTO]``) pelo factory ``get_inference_service``.
+``predict()`` continua síncrono para não mudar a assinatura do tool do agent
+LangGraph; ``image_bytes`` é keyword-only e opcional para back-compat.
 """
 
 from __future__ import annotations
 
+import logging
 import random
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from app.domains.diagnoses.schemas import Top3PredictionSchema
 from app.domains.inference.repository import DiseaseDTO
 from app.domains.inference.schemas import InferenceResult
 from app.shared.enums import SeverityEnum
 
+if TYPE_CHECKING:
+    from app.domains.inference.onnx_classifier import OnnxClassifier
+
+logger = logging.getLogger(__name__)
+
+# Metadados de fallback para as 6 classes do modelo — usados quando o catálogo
+# do banco ainda não tem o slug previsto (ex.: antes de re-rodar o seed que
+# troca antracnose -> mancha-olho-de-ra, ADR-0003). Garante rótulo correto
+# mesmo sem re-seed.
+_FALLBACK_META: dict[str, tuple[str, str | None, str]] = {
+    "cercosporiose": ("Cercosporiose", "Cercospora kikuchii", SeverityEnum.BAIXA.value),
+    "ferrugem-asiatica": ("Ferrugem Asiática", "Phakopsora pachyrhizi", SeverityEnum.ALTA.value),
+    "mancha-alvo": ("Mancha-Alvo", "Corynespora cassiicola", SeverityEnum.MEDIA.value),
+    "mancha-olho-de-ra": ("Mancha Olho-de-rã", "Cercospora sojina", SeverityEnum.MEDIA.value),
+    "mildio": ("Míldio", "Peronospora manshurica", SeverityEnum.BAIXA.value),
+    "saudavel": ("Saudável", None, SeverityEnum.NENHUMA.value),
+}
+
 
 class InferenceService:
-    """Mock CNN/ViT que escolhe random uma doenca do catalogo carregado.
+    """Inferência de doenças: ONNX real (se disponível) com fallback para mock.
 
     Args:
-        diseases: snapshot do catalogo (list[DiseaseDTO]) — injetado pelo
-            factory que consulta DiseaseRepository.list_by_crop().
+        diseases: snapshot do catálogo (list[DiseaseDTO]) — injetado pelo factory
+            que consulta DiseaseRepository.list_by_crop().
+        classifier: OnnxClassifier opcional. Quando presente e ``image_bytes`` é
+            passado a ``predict``, roda inferência real; senão usa o mock.
     """
 
     _MODEL_NAMES: ClassVar[dict[str, str]] = {
@@ -36,24 +59,97 @@ class InferenceService:
         "ensemble": "Ensemble",
     }
 
-    def __init__(self, diseases: list[DiseaseDTO]) -> None:
+    def __init__(
+        self,
+        diseases: list[DiseaseDTO],
+        classifier: OnnxClassifier | None = None,
+    ) -> None:
         if not diseases:
             raise ValueError(
                 "InferenceService precisa de pelo menos uma DiseaseDTO no catalogo"
             )
         self._diseases: list[DiseaseDTO] = list(diseases)
+        self._classifier = classifier
 
     def predict(
         self,
         model_id: str,
         image_name: str,
         crop_id: str | None = None,  # noqa: ARG002 — usado em sprint A2
+        *,
+        image_bytes: bytes | None = None,
     ) -> InferenceResult:
-        """Gera predicao mockada a partir do catalogo injetado.
+        """Prediz a doença na imagem.
 
-        ``crop_id`` reservado pra sprint A2 quando o service consultar
-        DiseaseRepository por crop em runtime.
+        Usa o modelo ONNX real quando ``self._classifier`` existe e ``image_bytes``
+        é fornecido; caso contrário (ou em erro) cai no mock. ``crop_id`` reservado
+        pra sprint A2 (catálogo por crop em runtime).
         """
+        if self._classifier is not None and image_bytes:
+            try:
+                return self._predict_onnx(model_id, image_name, image_bytes)
+            except Exception:  # noqa: BLE001 — nunca derruba o fluxo; cai no mock
+                logger.exception(
+                    "Inferência ONNX falhou para %s — usando mock", image_name
+                )
+        return self._predict_mock(model_id, image_name)
+
+    # ── ONNX real ────────────────────────────────────────────────────────────
+
+    def _resolve_meta(
+        self, slug: str
+    ) -> tuple[str, str | None, str, str | None]:
+        """Resolve (name_pt, scientific_name, severity, description) para um slug.
+
+        Prioriza o catálogo do banco; cai no _FALLBACK_META; por fim usa o slug cru.
+        """
+        dto = self.get_disease_by_slug(slug)
+        if dto is not None:
+            return dto.name_pt, dto.scientific_name, dto.severity_default, dto.description_md
+        fb = _FALLBACK_META.get(slug)
+        if fb is not None:
+            name_pt, sci, sev = fb
+            return name_pt, sci, sev, None
+        return slug, None, SeverityEnum.MEDIA.value, None
+
+    def _predict_onnx(
+        self, model_id: str, image_name: str, image_bytes: bytes
+    ) -> InferenceResult:
+        assert self._classifier is not None
+        preds = self._classifier.predict(image_bytes, top_k=3)
+
+        top3: list[Top3PredictionSchema] = []
+        for rank, (slug, prob) in enumerate(preds, start=1):
+            name_pt, sci, sev, _desc = self._resolve_meta(slug)
+            top3.append(
+                Top3PredictionSchema(
+                    rank=rank,
+                    disease_name=name_pt,
+                    disease_id=slug,
+                    scientific_name=sci,
+                    confidence=round(float(prob), 4),
+                    severity=SeverityEnum(sev),
+                )
+            )
+
+        primary_slug, primary_prob = preds[0]
+        name_pt, sci, sev, desc = self._resolve_meta(primary_slug)
+        return InferenceResult(
+            disease_id=primary_slug,
+            disease_name=name_pt,
+            scientific_name=sci,
+            severity=SeverityEnum(sev),
+            description=desc,
+            confidence=round(float(primary_prob), 4),
+            model_id=model_id,
+            image_name=image_name,
+            top3=top3,
+        )
+
+    # ── Mock (fallback) ──────────────────────────────────────────────────────
+
+    def _predict_mock(self, model_id: str, image_name: str) -> InferenceResult:
+        """Predição mockada a partir do catálogo injetado (comportamento legado)."""
         primary_idx = random.randint(0, len(self._diseases) - 1)
         primary = self._diseases[primary_idx]
 

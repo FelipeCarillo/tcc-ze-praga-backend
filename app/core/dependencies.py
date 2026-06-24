@@ -16,6 +16,7 @@ from app.domains.auth.service import AuthService
 from app.shared.enums import FeatureTypeEnum
 
 if TYPE_CHECKING:
+    from app.domains.inference.onnx_classifier import OnnxClassifier
     from app.domains.usage.service import UsageService
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -190,6 +191,55 @@ def get_talhao_service(repo=Depends(get_talhao_repository)):  # type: ignore[no-
     return TalhaoService(repo)
 
 
+# Cache do OnnxClassifier — carregado uma vez por processo. _onnx_loaded evita
+# recarregar o .onnx (67 MB) a cada request. TCC-023 / ADR-0003.
+_onnx_classifier: "OnnxClassifier | None" = None
+_onnx_loaded = False
+
+
+def _get_onnx_classifier() -> "OnnxClassifier | None":
+    """Retorna o OnnxClassifier real, ou None (mock) se desabilitado/indisponível.
+
+    Graceful: flag off, arquivo ausente ou onnxruntime faltando -> None, e o
+    InferenceService cai no mock automaticamente.
+    """
+    global _onnx_classifier, _onnx_loaded
+    if _onnx_loaded:
+        return _onnx_classifier
+    _onnx_loaded = True
+
+    import logging
+    from pathlib import Path
+
+    from app.config import settings
+
+    log = logging.getLogger(__name__)
+    if not settings.inference_use_onnx:
+        return None
+    try:
+        from app.domains.inference.onnx_classifier import OnnxClassifier
+
+        path = Path(settings.inference_onnx_model_path)
+        if not path.is_absolute():
+            # raiz do repo backend = dois níveis acima de app/core/
+            path = Path(__file__).resolve().parents[2] / path
+        if not path.exists():
+            log.warning("Modelo ONNX não encontrado em %s — usando mock", path)
+            return None
+        _onnx_classifier = OnnxClassifier.from_path(
+            path, input_size=settings.inference_onnx_input_size
+        )
+        log.info(
+            "OnnxClassifier carregado: %s (%d classes)",
+            path.name,
+            len(_onnx_classifier.labels),
+        )
+    except Exception:
+        log.exception("Falha ao carregar OnnxClassifier — usando mock")
+        _onnx_classifier = None
+    return _onnx_classifier
+
+
 async def get_inference_service(  # type: ignore[no-untyped-def]
     crop_repo=Depends(get_crop_repository),
     disease_repo=Depends(get_disease_repository),
@@ -198,7 +248,8 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
 
     Usa cache do DiseaseRepository — chamada repetida nao bate no DB.
     O catalogo e' carregado pra crop ``soja`` por padrao (multi-cultivo
-    completo vem em sprint A2).
+    completo vem em sprint A2). Injeta o OnnxClassifier real (TCC-023) quando
+    disponível; senão o service usa o mock.
     """
     from app.domains.inference.service import InferenceService
 
@@ -208,7 +259,7 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
             "Crop 'soja' nao encontrada no DB — rode `uv run python -m scripts.seed_crops`."
         )
     diseases = await disease_repo.list_by_crop(crop.id)
-    return InferenceService(diseases=diseases)
+    return InferenceService(diseases=diseases, classifier=_get_onnx_classifier())
 
 
 async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
@@ -230,7 +281,7 @@ async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
             f"Crop '{crop_id_or_slug}' nao encontrada — verifique seed_crops."
         )
     diseases = await disease_repo.list_by_crop(crop.id)
-    return InferenceService(diseases=diseases)
+    return InferenceService(diseases=diseases, classifier=_get_onnx_classifier())
 
 
 def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]

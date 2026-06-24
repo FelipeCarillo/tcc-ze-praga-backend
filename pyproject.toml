@@ -27,6 +27,9 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "sse-starlette>=3.4.4",
     "tavily-python>=0.7.24",
+    "onnxruntime>=1.20.0",
+    "numpy>=1.26.0",
+    "pillow>=10.4.0",
 ]
 
 [dependency-groups]
