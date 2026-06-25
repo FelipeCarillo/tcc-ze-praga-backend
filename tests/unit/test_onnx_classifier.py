@@ -24,8 +24,22 @@ LABELS = {
     "saudavel",
 }
 
+def _real_model_available() -> bool:
+    """True só quando o ONNX real está presente.
+
+    Em CI sem Git LFS o arquivo existe, mas é apenas um ponteiro (~130 bytes);
+    o modelo real tem dezenas de MB. Sem essa checagem, o onnxruntime falha o
+    parse do protobuf no ponteiro. Estes testes de integração então pulam.
+    """
+    try:
+        return MODEL.exists() and MODEL.stat().st_size > 1_000_000
+    except OSError:
+        return False
+
+
 pytestmark = pytest.mark.skipif(
-    not MODEL.exists(), reason="modelo ONNX não presente no repo"
+    not _real_model_available(),
+    reason="modelo ONNX real ausente (ponteiro LFS em CI) — teste de integração pulado",
 )
 
 
