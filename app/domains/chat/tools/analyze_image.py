@@ -11,6 +11,7 @@ Use SOMENTE depois que ``inspect_image`` confirmar que a imagem é uma planta.
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -65,7 +66,10 @@ def build_analyze_image_tool(
         model_id = state.get("selected_model") or "ensemble"
         user_id = state.get("current_user_id") or ""
 
-        result = inference_svc.predict(model_id, image.original_name)
+        image_bytes = base64.b64decode(image.b64) if image.b64 else None
+        result = inference_svc.predict(
+            model_id, image.original_name, image_bytes=image_bytes
+        )
         body = CreateDiagnosisRequest(
             disease_name=result.disease_name,
             disease_id=result.disease_id,

@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     # Agent feature flags
     agent_enable_ask_user: bool = True
 
+    # Inferência ONNX (TCC-023 / ADR-0003) — modelo real treinado no ASDID.
+    # Default ON; se o arquivo ou o onnxruntime faltarem, cai no mock
+    # automaticamente (graceful fallback no factory get_inference_service).
+    inference_use_onnx: bool = True
+    inference_onnx_model_path: str = "models/soja_efficientnet_b4.onnx"
+    inference_onnx_input_size: int = 380
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",")]

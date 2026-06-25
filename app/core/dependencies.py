@@ -16,6 +16,7 @@ from app.domains.auth.service import AuthService
 from app.shared.enums import FeatureTypeEnum
 
 if TYPE_CHECKING:
+    from app.domains.inference.onnx_classifier import OnnxClassifier
     from app.domains.usage.service import UsageService
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -190,6 +191,65 @@ def get_talhao_service(repo=Depends(get_talhao_repository)):  # type: ignore[no-
     return TalhaoService(repo)
 
 
+# Registro multi-modelo (TCC-095): cada chave canônica → (path relativo, input_size).
+# A ordem das classes é a mesma (alfabética, label_map.csv) p/ os 3 modelos, então
+# cada .onnx usa o .labels.json irmão idêntico. Permite troca real de modelo +
+# ensemble no chat e no REST /inference.
+_ONNX_MODELS: dict[str, tuple[str, int]] = {
+    "efficientnet_b4": ("models/soja_efficientnet_b4.onnx", 380),
+    "resnet50": ("models/soja_resnet50.onnx", 224),
+    "vit_b16": ("models/soja_vit_b16.onnx", 224),
+}
+
+# Cache do registro de OnnxClassifiers — carregado uma vez por processo.
+# _onnx_loaded evita recarregar os .onnx a cada request. TCC-023/TCC-095, ADR-0003.
+_onnx_classifiers: "dict[str, OnnxClassifier]" = {}
+_onnx_loaded = False
+
+
+def _get_onnx_classifiers() -> "dict[str, OnnxClassifier]":
+    """Retorna ``{chave_canônica: OnnxClassifier}`` para os modelos disponíveis.
+
+    Graceful: flag off → vazio; cada modelo ausente ou que falhe ao carregar é
+    apenas pulado (o InferenceService cai no mock/default p/ aquele id).
+    """
+    global _onnx_classifiers, _onnx_loaded
+    if _onnx_loaded:
+        return _onnx_classifiers
+    _onnx_loaded = True
+
+    import logging
+    from pathlib import Path
+
+    from app.config import settings
+
+    log = logging.getLogger(__name__)
+    if not settings.inference_use_onnx:
+        return _onnx_classifiers
+
+    repo_root = Path(__file__).resolve().parents[2]
+    for key, (rel_path, input_size) in _ONNX_MODELS.items():
+        try:
+            from app.domains.inference.onnx_classifier import OnnxClassifier
+
+            path = Path(rel_path)
+            if not path.is_absolute():
+                path = repo_root / path
+            if not path.exists():
+                log.warning("Modelo ONNX '%s' não encontrado em %s — pulado", key, path)
+                continue
+            _onnx_classifiers[key] = OnnxClassifier.from_path(path, input_size=input_size)
+            log.info("OnnxClassifier carregado: %s (%s, %dpx)", key, path.name, input_size)
+        except Exception:
+            log.exception("Falha ao carregar OnnxClassifier '%s' — pulado", key)
+    return _onnx_classifiers
+
+
+def _get_onnx_classifier() -> "OnnxClassifier | None":
+    """Default (efficientnet_b4) — back-compat para callers de modelo único."""
+    return _get_onnx_classifiers().get("efficientnet_b4")
+
+
 async def get_inference_service(  # type: ignore[no-untyped-def]
     crop_repo=Depends(get_crop_repository),
     disease_repo=Depends(get_disease_repository),
@@ -198,7 +258,8 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
 
     Usa cache do DiseaseRepository — chamada repetida nao bate no DB.
     O catalogo e' carregado pra crop ``soja`` por padrao (multi-cultivo
-    completo vem em sprint A2).
+    completo vem em sprint A2). Injeta o OnnxClassifier real (TCC-023) quando
+    disponível; senão o service usa o mock.
     """
     from app.domains.inference.service import InferenceService
 
@@ -208,7 +269,7 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
             "Crop 'soja' nao encontrada no DB — rode `uv run python -m scripts.seed_crops`."
         )
     diseases = await disease_repo.list_by_crop(crop.id)
-    return InferenceService(diseases=diseases)
+    return InferenceService(diseases=diseases, classifiers=_get_onnx_classifiers())
 
 
 async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
@@ -230,7 +291,7 @@ async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
             f"Crop '{crop_id_or_slug}' nao encontrada — verifique seed_crops."
         )
     diseases = await disease_repo.list_by_crop(crop.id)
-    return InferenceService(diseases=diseases)
+    return InferenceService(diseases=diseases, classifiers=_get_onnx_classifiers())
 
 
 def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]

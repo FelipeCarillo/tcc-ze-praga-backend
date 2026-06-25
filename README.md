@@ -135,6 +135,20 @@ Todas as rotas são prefixadas com `/api/v1`. Documentação interativa disponí
 
 Suporta filtros via query string: `?severity=alta&search=ferrugem&page=1&limit=20`
 
+### Inferência (`/inference`)
+
+| Método | Rota | Auth | Quota |
+|---|---|---|---|
+| POST | `/inference` | JWT | INFERENCE |
+
+Recebe uma imagem (multipart: campo `image` + `model`) e retorna o diagnóstico
+com top-3. A classificação usa um **modelo ONNX real** — EfficientNet-B4 treinado
+no dataset ASDID (~98,8% top-1, ver [ADR-0003](../.holoctl/context/decisions/0003-dataset-asdid-substitui-digipathos.md)) —
+carregado de `models/soja_efficientnet_b4.onnx`. Configurável via
+`INFERENCE_USE_ONNX` / `INFERENCE_ONNX_MODEL_PATH`; se o modelo ou o `onnxruntime`
+faltarem, cai num mock automaticamente (graceful fallback). Após mudar o catálogo
+de doenças, rode novamente o seed (`uv run python -m scripts.seed_crops`).
+
 ### Planos de Ação (`/action-plans`)
 
 | Método | Rota | Auth | Descrição |

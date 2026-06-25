@@ -25,7 +25,10 @@ async def run_inference(
     usage_svc: UsageService = Depends(get_usage_service),
     inference_svc: InferenceService = Depends(get_inference_service),
 ) -> DiagnosisResponse:
-    result = inference_svc.predict(model, image.filename or "imagem.jpg")
+    image_bytes = await image.read()
+    result = inference_svc.predict(
+        model, image.filename or "imagem.jpg", image_bytes=image_bytes
+    )
 
     body = CreateDiagnosisRequest(
         disease_name=result.disease_name,

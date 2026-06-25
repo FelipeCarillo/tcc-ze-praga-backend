@@ -72,11 +72,12 @@ async def _transcribe_audio(audio: UploadFile | None, transcription_svc: Any) ->
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"Áudio excede o limite de {MAX_UPLOAD_BYTES // (1024 * 1024)}MB.",
         )
-    return await transcription_svc.transcribe(
+    text: str | None = await transcription_svc.transcribe(
         data=data,
         filename=audio.filename or "voice.webm",
         mime=audio.content_type or "audio/webm",
     )
+    return text
 
 
 def _extract_last_message(messages: str) -> str:
