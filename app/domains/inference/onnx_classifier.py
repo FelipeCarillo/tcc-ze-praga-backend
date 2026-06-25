@@ -69,12 +69,21 @@ class OnnxClassifier:
         x = np.transpose(x, (2, 0, 1))[np.newaxis, ...]  # HWC -> (1, C, H, W)
         return np.ascontiguousarray(x, dtype=np.float32)
 
-    def predict(self, image_bytes: bytes, top_k: int = 3) -> list[tuple[str, float]]:
-        """Retorna ``[(slug, prob), ...]`` ordenado por confiança desc (top_k)."""
+    def predict_probs(self, image_bytes: bytes) -> dict[str, float]:
+        """Retorna ``{slug: prob}`` com a distribuição completa (softmax).
+
+        Usado pelo ensemble, que precisa do vetor inteiro de cada modelo para
+        tirar a média antes de escolher o top-k.
+        """
         x = self._preprocess(image_bytes)
         logits = self._session.run([self._output_name], {self._input_name: x})[0][0]
         logits = logits.astype(np.float64)
         exps = np.exp(logits - logits.max())
         probs = exps / exps.sum()
-        order = np.argsort(probs)[::-1][: max(1, top_k)]
-        return [(self._labels[i], float(probs[i])) for i in order]
+        return {self._labels[i]: float(probs[i]) for i in range(len(self._labels))}
+
+    def predict(self, image_bytes: bytes, top_k: int = 3) -> list[tuple[str, float]]:
+        """Retorna ``[(slug, prob), ...]`` ordenado por confiança desc (top_k)."""
+        probs = self.predict_probs(image_bytes)
+        order = sorted(probs.items(), key=lambda kv: kv[1], reverse=True)
+        return [(slug, prob) for slug, prob in order[: max(1, top_k)]]

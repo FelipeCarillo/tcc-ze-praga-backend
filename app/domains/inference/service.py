@@ -28,6 +28,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Chaves canônicas dos modelos disponíveis no registro.
+ENSEMBLE = "ensemble"
+EFFICIENTNET_B4 = "efficientnet_b4"
+RESNET50 = "resnet50"
+VIT_B16 = "vit_b16"
+
+# Normaliza os ids vindos da UI/REST para a chave canônica do registro.
+# O chat manda ``efficientnet``/``vit``; o REST e os docs mandam
+# ``efficientnet_b4``/``vit_b16``. Tudo desconhecido cai no ensemble (default
+# da UI). Comparação é case-insensitive e ignora ``-``/``_``.
+_MODEL_ALIASES: dict[str, str] = {
+    "ensemble": ENSEMBLE,
+    "efficientnet": EFFICIENTNET_B4,
+    "efficientnetb4": EFFICIENTNET_B4,
+    "resnet": RESNET50,
+    "resnet50": RESNET50,
+    "vit": VIT_B16,
+    "vitb16": VIT_B16,
+}
+
+
+def normalize_model_id(model_id: str | None) -> str:
+    """Mapeia um id de modelo (chat ou REST) para a chave canônica do registro."""
+    if not model_id:
+        return ENSEMBLE
+    key = model_id.strip().lower().replace("-", "").replace("_", "").replace("/", "")
+    return _MODEL_ALIASES.get(key, ENSEMBLE)
+
 # Metadados de fallback para as 6 classes do modelo — usados quando o catálogo
 # do banco ainda não tem o slug previsto (ex.: antes de re-rodar o seed que
 # troca antracnose -> mancha-olho-de-ra, ADR-0003). Garante rótulo correto
@@ -55,7 +83,9 @@ class InferenceService:
     _MODEL_NAMES: ClassVar[dict[str, str]] = {
         "resnet50": "ResNet-50",
         "efficientnet": "EfficientNet-B4",
+        "efficientnet_b4": "EfficientNet-B4",
         "vit": "ViT-B/16",
+        "vit_b16": "ViT-B/16",
         "ensemble": "Ensemble",
     }
 
@@ -63,13 +93,23 @@ class InferenceService:
         self,
         diseases: list[DiseaseDTO],
         classifier: OnnxClassifier | None = None,
+        classifiers: dict[str, OnnxClassifier] | None = None,
     ) -> None:
+        """Args:
+        diseases: snapshot do catálogo (list[DiseaseDTO]).
+        classifier: classificador único (back-compat) — usado como default
+            quando ``classifiers`` está vazio ou o modelo pedido não existe.
+        classifiers: registro ``{chave_canônica: OnnxClassifier}`` para troca
+            real de modelo e ensemble.
+        """
         if not diseases:
             raise ValueError(
                 "InferenceService precisa de pelo menos uma DiseaseDTO no catalogo"
             )
         self._diseases: list[DiseaseDTO] = list(diseases)
-        self._classifier = classifier
+        self._classifiers: dict[str, OnnxClassifier] = dict(classifiers or {})
+        # Default = classifier explícito, ou o efficientnet_b4 do registro.
+        self._classifier = classifier or self._classifiers.get(EFFICIENTNET_B4)
 
     def predict(
         self,
@@ -81,13 +121,28 @@ class InferenceService:
     ) -> InferenceResult:
         """Prediz a doença na imagem.
 
-        Usa o modelo ONNX real quando ``self._classifier`` existe e ``image_bytes``
-        é fornecido; caso contrário (ou em erro) cai no mock. ``crop_id`` reservado
-        pra sprint A2 (catálogo por crop em runtime).
+        Resolve o modelo pedido (``model_id``) para a chave canônica e roda o
+        ONNX correspondente; ``ensemble`` faz a média das probabilidades de todos
+        os modelos do registro. Sem classifier, sem bytes, ou em erro → mock.
+        ``crop_id`` reservado pra sprint A2 (catálogo por crop em runtime).
         """
-        if self._classifier is not None and image_bytes:
+        if image_bytes:
+            canonical = normalize_model_id(model_id)
             try:
-                return self._predict_onnx(model_id, image_name, image_bytes)
+                if canonical == ENSEMBLE:
+                    members = list(self._classifiers.values()) or (
+                        [self._classifier] if self._classifier is not None else []
+                    )
+                    if members:
+                        return self._predict_ensemble(
+                            members, model_id, image_name, image_bytes
+                        )
+                else:
+                    clf = self._classifiers.get(canonical) or self._classifier
+                    if clf is not None:
+                        return self._predict_onnx(
+                            clf, model_id, image_name, image_bytes
+                        )
             except Exception:  # noqa: BLE001 — nunca derruba o fluxo; cai no mock
                 logger.exception(
                     "Inferência ONNX falhou para %s — usando mock", image_name
@@ -112,12 +167,10 @@ class InferenceService:
             return name_pt, sci, sev, None
         return slug, None, SeverityEnum.MEDIA.value, None
 
-    def _predict_onnx(
-        self, model_id: str, image_name: str, image_bytes: bytes
+    def _build_result(
+        self, model_id: str, image_name: str, preds: list[tuple[str, float]]
     ) -> InferenceResult:
-        assert self._classifier is not None
-        preds = self._classifier.predict(image_bytes, top_k=3)
-
+        """Monta o InferenceResult (primary + top3) a partir de ``[(slug, prob)]``."""
         top3: list[Top3PredictionSchema] = []
         for rank, (slug, prob) in enumerate(preds, start=1):
             name_pt, sci, sev, _desc = self._resolve_meta(slug)
@@ -131,7 +184,6 @@ class InferenceService:
                     severity=SeverityEnum(sev),
                 )
             )
-
         primary_slug, primary_prob = preds[0]
         name_pt, sci, sev, desc = self._resolve_meta(primary_slug)
         return InferenceResult(
@@ -145,6 +197,36 @@ class InferenceService:
             image_name=image_name,
             top3=top3,
         )
+
+    def _predict_onnx(
+        self,
+        classifier: OnnxClassifier,
+        model_id: str,
+        image_name: str,
+        image_bytes: bytes,
+    ) -> InferenceResult:
+        preds = classifier.predict(image_bytes, top_k=3)
+        return self._build_result(model_id, image_name, preds)
+
+    def _predict_ensemble(
+        self,
+        classifiers: list[OnnxClassifier],
+        model_id: str,
+        image_name: str,
+        image_bytes: bytes,
+    ) -> InferenceResult:
+        """Média das probabilidades (soft-voting) de todos os modelos."""
+        agg: dict[str, float] = {}
+        for clf in classifiers:
+            for slug, prob in clf.predict_probs(image_bytes).items():
+                agg[slug] = agg.get(slug, 0.0) + prob
+        n = len(classifiers)
+        averaged = sorted(
+            ((slug, total / n) for slug, total in agg.items()),
+            key=lambda kv: kv[1],
+            reverse=True,
+        )
+        return self._build_result(model_id, image_name, averaged[:3])
 
     # ── Mock (fallback) ──────────────────────────────────────────────────────
 
