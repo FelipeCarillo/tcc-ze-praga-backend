@@ -4,7 +4,7 @@ Guia para colocar o projeto no ar de graça, com cadastro fechado por
 verificação de e-mail e um interruptor para desligar tudo quando não estiver
 em uso.
 
-## Estado atual (24/08/2026)
+## Estado atual (25/08/2026)
 
 Já provisionado:
 
@@ -14,21 +14,39 @@ Já provisionado:
 | URL do Supabase | `https://majcxiebwxkakvffnodj.supabase.co` | — |
 | API key do Resend | `ze-praga-producao` (id `d99e9655-baff-4831-b3a2-030147c7e54b`) | sending_access |
 | Projeto Vercel | `prj_bjAzAmdHbJa0qBn5K0l9I2zYFBls` (`tcc-ze-praga-frontend`) | deploy READY, previews protegidos por Vercel Authentication |
+| Projeto GCP | `ze-praga-tcc`, faturamento `01E8D8-BEE8EB-A15A75` | ativo |
+| Serviço Cloud Run | `ze-praga-api` em `us-east1`, revisão `00002-wnf` | **no ar**, `/api/v1/health` respondendo |
+| URL da API | `https://ze-praga-api-zwi6li6n7q-ue.a.run.app` | também atende em `https://ze-praga-api-258465616083.us-east1.run.app` |
 
-A conexão foi validada de ponta a ponta contra o Supabase: cadastro devolvendo
-202, login barrado antes de confirmar, link ativando a conta, login liberado e
-link reutilizado sendo recusado.
+Validado em produção contra o serviço no ar: cadastro devolvendo 202, login
+barrado antes de confirmar, e CORS liberando o domínio da Vercel. Os seeds
+rodaram no boot do container — 1 cultura, 6 doenças e 18 planos de ação.
 
 Falta:
 
-1. **service_role key** — não sai pela API, só pelo painel
-   (Project Settings → API).
-2. **Bucket de Storage** — criar no painel.
-3. **Serviço no Cloud Run** — criar o projeto no GCP com faturamento
-   vinculado e rodar `scripts/deploy/cloudrun.ps1` (seção 3).
-4. **Variáveis na Vercel** — definir no painel (seção 4).
-5. **Commitar o frontend** — as telas de verificação de e-mail ainda estão só
-   na máquina local; o deploy atual foi feito do `main` do GitHub, sem elas.
+1. **Bucket de Storage** — criar no painel do Supabase, com o nome `uploads`
+   (é o default do `SupabaseStorageUploader`). Sem ele o envio de imagem falha.
+2. **Mergear** a branch `chore/api-url-producao` no frontend — é ela que aponta
+   o build para a API no Cloud Run.
+3. **Remetente do Resend** — veja o aviso abaixo. É o que bloqueia a
+   demonstração hoje.
+
+> ### O gargalo da demonstração
+>
+> O remetente sandbox (`onboarding@resend.dev`) **só entrega no e-mail dono da
+> conta Resend**, que é `felipecarillo@outlook.com`. Confirmado em produção: o
+> Resend devolveu 403 com essa mensagem exata ao tentar enviar para outro
+> endereço.
+>
+> Consequência prática: hoje **só esse endereço consegue criar conta**. Nem
+> outro e-mail seu, nem ninguém da banca. O backend não quebra: o
+> `ResendEmailSender` registra o erro e o cadastro segue devolvendo 202. Mas o
+> link nunca chega, e a conta fica inativa para sempre.
+>
+> Saídas, da melhor para a pior:
+> 1. Verificar um domínio em resend.com/domains e trocar o `EMAIL_FROM`.
+> 2. Usar `felipecarillo@outlook.com` como a conta da demonstração.
+> 3. Ativar contas na mão: `UPDATE users SET is_active = true WHERE email = '...'`.
 
 > Produção na Vercel **não** pode ser protegida por senha no plano Hobby (só
 > previews). Quando o `main` receber push, o deploy de produção nasce com URL
