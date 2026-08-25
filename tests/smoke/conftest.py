@@ -25,8 +25,11 @@ from httpx import ASGITransport, AsyncClient
 from app.core.dependencies import (
     get_current_user,
     get_current_user_or_api_key,
+    get_plan_features,
+    get_plan_features_dual,
     get_usage_service,
 )
+from app.domains.subscriptions.features import ENTERPRISE_FEATURES
 from app.main import app
 from tests.conftest import make_user_dto
 
@@ -53,13 +56,17 @@ def make_usage_mock() -> AsyncMock:
 def bypass_auth_overrides() -> None:
     """Aplica os overrides que destravam rotas autenticadas + com quota.
 
-    Sobrescreve `get_current_user` / `get_current_user_or_api_key` (usuário fake)
-    e `get_usage_service` (quota no-op). Chame no início da fixture-client do
-    arquivo de domínio, *antes* de instanciar o `AsyncClient`.
+    Sobrescreve `get_current_user` / `get_current_user_or_api_key` (usuário fake),
+    `get_usage_service` (quota no-op) e as duas variantes de `plan_features`
+    (Enterprise — libera todos os modelos, senão o gate de plano trocaria o
+    modelo pedido). Chame no início da fixture-client do arquivo de domínio,
+    *antes* de instanciar o `AsyncClient`.
     """
     app.dependency_overrides[get_current_user] = lambda: make_user_dto()
     app.dependency_overrides[get_current_user_or_api_key] = lambda: make_user_dto()
     app.dependency_overrides[get_usage_service] = make_usage_mock
+    app.dependency_overrides[get_plan_features] = lambda: ENTERPRISE_FEATURES
+    app.dependency_overrides[get_plan_features_dual] = lambda: ENTERPRISE_FEATURES
 
 
 @pytest.fixture

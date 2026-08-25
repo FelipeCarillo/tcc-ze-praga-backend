@@ -80,3 +80,65 @@ async def test_me_200(client_auth):
     r = await client_auth.get("/api/v1/auth/me")
     assert r.status_code == 200
     assert r.json()["email"] == "test@example.com"
+
+
+# ── Verificacao de e-mail (TCC-090) ───────────────────────────────────────────
+
+
+async def test_register_202_quando_verificacao_exigida(client_auth, mock_auth_svc):
+    """Com o gate ligado o cadastro responde 202 e nao entrega token."""
+    from app.domains.auth.schemas import RegistrationPendingResponse
+
+    mock_auth_svc.register.return_value = RegistrationPendingResponse(email="novo@test.com")
+    r = await client_auth.post(
+        "/api/v1/auth/register",
+        json={"email": "novo@test.com", "password": "secret123"},
+    )
+    assert r.status_code == 202
+    body = r.json()
+    assert body["verification_required"] is True
+    assert body["email"] == "novo@test.com"
+    assert "access_token" not in body
+
+
+async def test_verify_redireciona_com_sucesso(client_auth, mock_auth_svc):
+    mock_auth_svc.verify_email = AsyncMock(return_value=make_user_dto(is_active=True))
+    r = await client_auth.get(
+        "/api/v1/auth/verify", params={"token": "x" * 32}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert r.headers["location"].endswith("/login?verificado=1")
+
+
+async def test_verify_redireciona_com_erro_em_token_invalido(client_auth, mock_auth_svc):
+    """Token ruim nao vira 401 cru — quem abre isso e um navegador."""
+    mock_auth_svc.verify_email = AsyncMock(side_effect=UnauthorizedError("Link invalido"))
+    r = await client_auth.get(
+        "/api/v1/auth/verify", params={"token": "x" * 32}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    assert r.headers["location"].endswith("/login?verificado=erro")
+
+
+async def test_verify_rejeita_token_curto(client_auth):
+    r = await client_auth.get("/api/v1/auth/verify", params={"token": "curto"})
+    assert r.status_code == 422
+
+
+async def test_resend_verification_202(client_auth, mock_auth_svc):
+    mock_auth_svc.resend_verification = AsyncMock()
+    r = await client_auth.post(
+        "/api/v1/auth/resend-verification", json={"email": "novo@test.com"}
+    )
+    assert r.status_code == 202
+    mock_auth_svc.resend_verification.assert_awaited_once_with("novo@test.com")
+
+
+async def test_resend_verification_nao_revela_conta_inexistente(client_auth, mock_auth_svc):
+    """Mesma resposta pra e-mail que existe e pra que nao existe."""
+    mock_auth_svc.resend_verification = AsyncMock()
+    r = await client_auth.post(
+        "/api/v1/auth/resend-verification", json={"email": "ghost@test.com"}
+    )
+    assert r.status_code == 202
+    assert "reenviado" in r.json()["message"]

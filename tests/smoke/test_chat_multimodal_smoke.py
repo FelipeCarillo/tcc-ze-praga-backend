@@ -80,10 +80,25 @@ async def test_chat_without_audio_has_null_transcript(client_multimodal):
 
 
 def test_chat_tools_include_vision_gate():
-    """O chat ao vivo monta inspect_image + analyze_image (gate de visão plugado)."""
-    from app.domains.chat.agent import build_chat_tools
+    """O chat ao vivo monta inspect_image + analyze_image (gate de visão plugado).
 
-    tools = build_chat_tools(MagicMock(), MagicMock(), MagicMock())
+    Checa o caminho de produção: ``ChatService`` monta as factories e o
+    ``tool_registry`` filtra pelo plano. Antes este smoke exercitava um helper
+    (``build_chat_tools``) que o service nunca chamava — passava verde enquanto
+    o grafo real subia com outro conjunto de tools.
+    """
+    from app.domains.chat.service import ChatService
+    from app.domains.chat.tool_registry import build_tools
+    from app.domains.subscriptions.features import FREE_FEATURES
+
+    svc = ChatService(
+        session_repo=AsyncMock(),
+        message_repo=AsyncMock(),
+        inference_svc=MagicMock(),
+        action_plan_svc=AsyncMock(),
+        diagnosis_svc=AsyncMock(),
+    )
+    tools = build_tools(svc._build_tool_factories(), FREE_FEATURES.model_dump())
     names = {t.name for t in tools}
     assert "inspect_image" in names
     assert "analyze_image" in names

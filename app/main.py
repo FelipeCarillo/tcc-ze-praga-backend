@@ -28,6 +28,14 @@ from app.domains.uploads.router import router as uploads_router
 from app.domains.usage.router import router as usage_router
 from app.domains.users.router import router as users_router
 
+# Sem isso os loggers de ``app.*`` propagam pra um root sem handler e somem —
+# o uvicorn só configura os loggers dele. Valia pro ``logger.exception`` do
+# warm-up abaixo e vale pros logs do container no deploy.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:

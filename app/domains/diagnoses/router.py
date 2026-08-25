@@ -1,8 +1,19 @@
+import base64
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 
 from app.core.dependencies import (
     auth_method_dual,
@@ -11,6 +22,7 @@ from app.core.dependencies import (
     get_diagnosis_repository,
     get_diagnosis_service,
     get_inference_service,
+    get_plan_features_dual,
     get_store_dep,
     get_subscription_repository,
     get_usage_repository,
@@ -28,7 +40,8 @@ from app.domains.diagnoses.schemas import (
     Top3PredictionSchema,
 )
 from app.domains.diagnoses.service import DiagnosisService
-from app.domains.inference.service import InferenceService
+from app.domains.inference.service import InferenceService, resolve_allowed_model
+from app.domains.subscriptions.features import PlanFeatures
 from app.domains.usage.service import UsageService
 from app.shared.enums import FeatureTypeEnum, SeverityEnum
 from app.shared.pagination import PaginatedResponse
@@ -42,6 +55,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/diagnoses", tags=["Diagnoses"])
+
+# Espelha o limite do chat (app/domains/chat/router.py) — mesma politica de upload.
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+async def _read_image_batch(
+    images: list[UploadFile],
+) -> tuple[list[str], list[str]]:
+    """Le os uploads e devolve ``(image_batch_b64, image_ids)`` alinhados.
+
+    Sem isto o sub-grafo recebia ``image_batch=[]`` e o
+    ``run_inference_node`` caia no mock — os bytes eram lidos e descartados.
+    """
+    batch: list[str] = []
+    ids: list[str] = []
+    for i, img in enumerate(images):
+        data = await img.read()
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=(
+                    f"Imagem '{img.filename or i}' excede o limite de "
+                    f"{MAX_UPLOAD_BYTES // (1024 * 1024)}MB."
+                ),
+            )
+        batch.append(base64.b64encode(data).decode("ascii"))
+        ids.append(img.filename or f"image-{i}")
+    return batch, ids
 
 
 @router.post("/analyze", response_model=list[DiagnosisResponse], status_code=200)
@@ -57,6 +98,7 @@ async def analyze(
     usage_svc: UsageService = Depends(get_usage_service),
     usage_repo: "UsageRepository" = Depends(get_usage_repository),
     sub_repo: "SubscriptionRepository" = Depends(get_subscription_repository),
+    plan_features: PlanFeatures = Depends(get_plan_features_dual),
 ) -> list[DiagnosisResponse]:
     """Endpoint REST direto pra diagnostico (sem chat).
 
@@ -70,15 +112,19 @@ async def analyze(
     )
 
     graph = diagnosis_graph_factory(crop_id)
-    image_ids = [img.filename or f"image-{i}" for i, img in enumerate(images)]
+    image_batch, image_ids = await _read_image_batch(images)
+    effective_model, _downgraded = resolve_allowed_model(
+        model, plan_features.diagnosis_models
+    )
 
     result = await graph.ainvoke(
         {
             "user_id": current_user.id,
             "crop_id": crop_id,
-            "image_batch": [],
+            "image_batch": image_batch,
             "image_ids": image_ids,
-            "model_id": model,
+            "model_id": effective_model,
+            "plan_features": plan_features.model_dump(),
         }
     )
 
@@ -120,7 +166,8 @@ async def analyze(
         feature,
         {
             "crop_id": crop_id,
-            "model": model,
+            "model": effective_model,
+            "model_requested": model,
             "batch_size": len(images),
             "auth_method": auth_method,
         },

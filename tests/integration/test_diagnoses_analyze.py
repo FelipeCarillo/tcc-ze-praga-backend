@@ -18,12 +18,14 @@ from app.core.dependencies import (
     get_current_user_or_api_key,
     get_diagnosis_graph_factory,
     get_diagnosis_repository,
+    get_plan_features_dual,
     get_subscription_repository,
     get_usage_repository,
     get_usage_service,
     require_quota,
     require_quota_dual,
 )
+from app.domains.subscriptions.features import ENTERPRISE_FEATURES
 from app.main import app
 from app.shared.enums import FeatureTypeEnum
 from tests.conftest import make_diagnosis_dto, make_user_dto
@@ -83,6 +85,7 @@ async def client_analyze(mock_graph_factory, mock_diag_repo, mock_usage_svc):
     app.dependency_overrides[get_subscription_repository] = lambda: AsyncMock()
     app.dependency_overrides[get_current_user] = lambda: make_user_dto()
     app.dependency_overrides[get_current_user_or_api_key] = lambda: make_user_dto()
+    app.dependency_overrides[get_plan_features_dual] = lambda: ENTERPRISE_FEATURES
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as ac:
@@ -165,7 +168,10 @@ async def test_analyze_records_usage_with_batch_metadata(
     metadata = mock_usage_svc.record_usage.await_args.args[2]
     assert metadata == {
         "crop_id": "milho",
-        "model": "vit",
+        # O router normaliza o id pro canonico do registro antes de rodar o
+        # sub-grafo, e guarda o pedido original em ``model_requested``.
+        "model": "vit_b16",
+        "model_requested": "vit",
         "batch_size": 2,
         "auth_method": "jwt",
     }

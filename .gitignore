@@ -206,3 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .env
+
+# Credenciais do interruptor de producao (scripts/deploy/zepraga.ps1)
+scripts/deploy/deploy.local.json

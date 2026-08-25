@@ -10,9 +10,11 @@ from app.core.dependencies import (
     get_current_user,
     get_diagnosis_service,
     get_inference_service,
+    get_plan_features,
     get_usage_service,
     require_quota,
 )
+from app.domains.subscriptions.features import ENTERPRISE_FEATURES
 from app.domains.diagnoses.schemas import DiagnosisResponse, Top3PredictionSchema
 from app.domains.inference.schemas import InferenceResult
 from app.main import app
@@ -118,6 +120,8 @@ async def client_inference(mock_inference_svc, mock_diagnosis_svc, mock_usage_sv
     app.dependency_overrides[get_diagnosis_service] = lambda: mock_diagnosis_svc
     app.dependency_overrides[get_usage_service] = lambda: mock_usage_svc
     app.dependency_overrides[get_current_user] = lambda: make_user_dto()
+    # Enterprise: libera os 4 modelos, pro gate de plano nao trocar o pedido.
+    app.dependency_overrides[get_plan_features] = lambda: ENTERPRISE_FEATURES
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
@@ -155,11 +159,19 @@ async def test_run_inference_returns_diagnosis(
     # Usage registrado
     mock_usage_svc.record_usage.assert_awaited_once()
     metadata = mock_usage_svc.record_usage.await_args.args[2]
-    assert metadata == {"disease_id": "ferrugem-asiatica", "model": "ensemble"}
+    assert metadata == {
+        "disease_id": "ferrugem-asiatica",
+        "model": "ensemble",
+        "model_requested": "ensemble",
+    }
 
 
 async def test_run_inference_with_alternate_model(client_inference, mock_inference_svc):
-    """Endpoint aceita diferentes modelos e repassa pra predict."""
+    """Endpoint aceita diferentes modelos e normaliza pro id canonico.
+
+    O gate de plano (TCC-051) resolve o modelo efetivo antes de chamar o
+    service, entao 'vit' chega em predict como 'vit_b16'.
+    """
     files = {"image": ("imagem.png", io.BytesIO(b"\x89PNG"), "image/png")}
     data = {"model": "vit"}
 
@@ -167,5 +179,5 @@ async def test_run_inference_with_alternate_model(client_inference, mock_inferen
 
     assert r.status_code == 201
     mock_inference_svc.predict.assert_called_once_with(
-        "vit", "imagem.png", image_bytes=b"\x89PNG"
+        "vit_b16", "imagem.png", image_bytes=b"\x89PNG"
     )

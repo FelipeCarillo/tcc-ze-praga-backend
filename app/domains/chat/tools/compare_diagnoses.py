@@ -92,7 +92,8 @@ def build_compare_diagnoses_tool(
                     {
                         "user_id": user_id,
                         "crop_id": effective_crop,
-                        "image_batch": [],
+                        # Mesma imagem pra todos os modelos — bytes reais.
+                        "image_batch": [target.b64 or ""],
                         "image_ids": [target.id],
                         "model_id": model_id,
                     }
