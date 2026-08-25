@@ -18,3 +18,13 @@ class UserCreateDTO:
     email: str
     password_hash: str
     full_name: str | None = None
+
+
+@dataclass(frozen=True)
+class EmailVerificationTokenDTO:
+    id: str
+    user_id: str
+    token_hash: str
+    expires_at: datetime
+    used_at: datetime | None
+    created_at: datetime

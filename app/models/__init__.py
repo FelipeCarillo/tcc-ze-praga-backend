@@ -8,6 +8,7 @@ from app.models.crop_model import CropModel
 from app.models.diagnosis import Diagnosis
 from app.models.diagnosis_top3 import DiagnosisTop3
 from app.models.disease import Disease
+from app.models.email_verification_token import EmailVerificationToken
 from app.models.subscription_plan import SubscriptionPlan
 from app.models.talhao import Talhao
 from app.models.uploaded_file import UploadedFile
@@ -32,4 +33,5 @@ __all__ = [
     "Disease",
     "CropModel",
     "UploadedFile",
+    "EmailVerificationToken",
 ]

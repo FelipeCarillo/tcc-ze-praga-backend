@@ -67,11 +67,34 @@ class Settings(BaseSettings):
     agent_enable_search_web: bool = True
     agent_enable_search_scientific: bool = True
 
+    # ─── E-mail (Resend) — verificação de cadastro ────────────────────────────
+    # Sem ``resend_api_key`` o sender cai no NullEmailSender (loga e não envia),
+    # mesmo padrão de graceful degradation do InferenceService. Isso mantém
+    # dev e testes funcionando sem credencial.
+    resend_api_key: str | None = None
+    email_from: str = "Zé Praga <onboarding@resend.dev>"
+    email_verification_ttl_hours: int = 24
+
+    # Gate de cadastro: com ``True`` o usuário nasce inativo e só o link do
+    # e-mail o ativa. Default OFF pra não quebrar dev/testes — ligue em produção.
+    require_email_verification: bool = False
+
+    # URL pública do frontend — destino do redirect pós-verificação.
+    frontend_url: str = "http://localhost:3000"
+
+    # URL pública da própria API — o link do e-mail aponta pra cá, não pro
+    # frontend: quem abre é o navegador vindo do cliente de e-mail, e o
+    # endpoint já devolve 303 pro frontend. Evita uma página só pra isso.
+    public_api_url: str = "http://localhost:8000"
+
     # App
     app_env: str = "development"
     allowed_origins: str = "http://localhost:3000"
 
     # Agent feature flags
+    # HITL ligado: o ciclo esta fechado ponta a ponta — a tool dispara
+    # interrupt(), o checkpointer persiste o snapshot, o frontend renderiza a
+    # pergunta (InterruptPrompt) e retoma via POST /chat/resume/stream.
     agent_enable_ask_user: bool = True
 
     # Inferência ONNX (TCC-023 / ADR-0003) — modelo real treinado no ASDID.

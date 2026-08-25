@@ -14,6 +14,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
@@ -27,3 +31,15 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+class RegistrationPendingResponse(BaseModel):
+    """Resposta do cadastro quando a verificação de e-mail está exigida.
+
+    Devolvida com HTTP 202 — a conta existe mas ainda não tem token de acesso,
+    porque o usuário só é ativado ao clicar no link enviado.
+    """
+
+    verification_required: bool = True
+    email: str
+    message: str = "Enviamos um link de confirmação para o seu e-mail."

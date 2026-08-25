@@ -11,7 +11,7 @@ from app.db.database import AsyncSessionLocal
 from app.domains.auth.api_key_repository import ApiKeyRepository
 from app.domains.auth.api_key_service import ApiKeyService
 from app.domains.auth.dto import UserDTO
-from app.domains.auth.repository import UserRepository
+from app.domains.auth.repository import EmailVerificationRepository, UserRepository
 from app.domains.auth.service import AuthService
 from app.shared.enums import FeatureTypeEnum
 
@@ -125,10 +125,19 @@ def get_upload_service(  # type: ignore[no-untyped-def]
     return UploadService(repo, uploader)
 
 
+def get_email_verification_repository(
+    db: AsyncSession = Depends(get_db),
+) -> EmailVerificationRepository:
+    return EmailVerificationRepository(db)
+
+
 def get_auth_service(
     repo: UserRepository = Depends(get_user_repository),
+    verification_repo: EmailVerificationRepository = Depends(get_email_verification_repository),
 ) -> AuthService:
-    return AuthService(repo)
+    # O sender fica None: o service resolve via get_email_sender() na hora do
+    # envio, caindo no NullEmailSender quando nao ha RESEND_API_KEY (TCC-090).
+    return AuthService(repo, verification_repo)
 
 
 def get_api_key_repository(db: AsyncSession = Depends(get_db)) -> ApiKeyRepository:
@@ -167,10 +176,16 @@ def get_usage_service(  # type: ignore[no-untyped-def]
 
 def get_diagnosis_service(  # type: ignore[no-untyped-def]
     repo=Depends(get_diagnosis_repository),
+    upload_svc=Depends(get_upload_service),
 ):
+    """DiagnosisService com resolvedor de imagem.
+
+    ``diagnoses.image_url`` guarda a storage key; o resolvedor a converte em URL
+    assinada na leitura (em lote). Sem ele o campo sai cru e a UI nao renderiza.
+    """
     from app.domains.diagnoses.service import DiagnosisService
 
-    return DiagnosisService(repo)
+    return DiagnosisService(repo, image_url_resolver=upload_svc.signed_urls)
 
 
 def get_action_plan_service(repo=Depends(get_action_plan_repository)):  # type: ignore[no-untyped-def]
@@ -298,6 +313,7 @@ def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]
     inference_svc=Depends(get_inference_service),
     action_plan_svc=Depends(get_action_plan_service),
     diagnosis_svc=Depends(get_diagnosis_service),
+    upload_svc=Depends(get_upload_service),
 ):
     """Factory cacheada (por request) de ``CompiledStateGraph`` do diagnosis_graph.
 
@@ -319,7 +335,11 @@ def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]
         if cache_key in _cache:
             return _cache[cache_key]
         graph = build_diagnosis_graph(
-            inference_svc, action_plan_svc, diagnosis_svc, store=store
+            inference_svc,
+            action_plan_svc,
+            diagnosis_svc,
+            store=store,
+            upload_svc=upload_svc,
         )
         _cache[cache_key] = graph
         return graph
@@ -334,7 +354,15 @@ def get_chat_service(  # type: ignore[no-untyped-def]
     action_plan_svc=Depends(get_action_plan_service),
     diagnosis_svc=Depends(get_diagnosis_service),
     sub_repo=Depends(get_subscription_repository),
+    diagnosis_graph_factory=Depends(get_diagnosis_graph_factory),
+    upload_svc=Depends(get_upload_service),
 ):
+    """ChatService com todas as deps do registry de tools.
+
+    ``diagnosis_graph_factory`` habilita ``deep_diagnose`` e ``compare_diagnoses``
+    — sem ela essas duas tools ficam de fora do grafo (ver
+    ``ChatService._build_tool_factories``).
+    """
     from app.db.checkpointer import get_checkpointer
     from app.db.store import get_store
     from app.domains.chat.service import ChatService
@@ -348,6 +376,8 @@ def get_chat_service(  # type: ignore[no-untyped-def]
         store_factory=get_store,
         checkpointer_factory=get_checkpointer,
         sub_repo=sub_repo,
+        diagnosis_graph_factory=diagnosis_graph_factory,
+        upload_svc=upload_svc,
     )
 
 
@@ -416,6 +446,47 @@ async def auth_method_dual(
     diferente (INFERENCE vs API) e por middleware/rate-limit headers.
     """
     return "api_key" if x_api_key else "jwt"
+
+
+# ── Plan features ─────────────────────────────────────────────────────────────
+
+
+def plan_features_dep(  # type: ignore[no-untyped-def]
+    user_dep: Callable[..., Awaitable[UserDTO]],
+):
+    """Factory de dependency que resolve ``PlanFeatures`` do plano ativo.
+
+    Recebe a dependency de auth que a rota ja usa (``get_current_user`` pras
+    rotas so'-JWT, ``get_current_user_or_api_key`` pras de auth dual) em vez de
+    resolver o usuario por conta propria. Assim o FastAPI reaproveita o cache
+    de dependencia do request — sem segundo decode de token — e os overrides
+    de auth nos testes continuam valendo.
+
+    Centraliza o que o ``ChatService._resolve_plan_features`` faz, pros routers
+    REST aplicarem os mesmos gates (ex: ``diagnosis_models``) sem duplicar a
+    resolucao da subscription.
+    """
+
+    async def _dependency(  # type: ignore[no-untyped-def]
+        current_user: UserDTO = Depends(user_dep),
+        sub_repo=Depends(get_subscription_repository),
+    ):
+        from app.domains.subscriptions.features import FREE_FEATURES, PlanFeatures
+
+        sub = await sub_repo.find_user_subscription(current_user.id)
+        if sub is None or sub.plan.features is None:
+            return FREE_FEATURES
+        try:
+            return PlanFeatures(**sub.plan.features)
+        except Exception:  # noqa: BLE001 — features malformadas nao travam o request
+            return FREE_FEATURES
+
+    return _dependency
+
+
+# Variantes prontas — uma por caminho de auth.
+get_plan_features = plan_features_dep(get_current_user)
+get_plan_features_dual = plan_features_dep(get_current_user_or_api_key)
 
 
 # ── Quota ─────────────────────────────────────────────────────────────────────
