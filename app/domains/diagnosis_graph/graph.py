@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from app.domains.action_plans.service import ActionPlanService
     from app.domains.diagnoses.service import DiagnosisService
     from app.domains.inference.service import InferenceService
+    from app.domains.uploads.service import UploadService
 
 
 def build_diagnosis_graph(
@@ -51,6 +52,7 @@ def build_diagnosis_graph(
     store: BaseStore | None = None,
     tavily_search: SearchCallable | None = None,
     scielo_search: SearchCallable | None = None,
+    upload_svc: UploadService | None = None,
 ) -> CompiledStateGraph[DiagnosisState]:
     """Compila o sub-grafo de diagnostico com os services injetados.
 
@@ -67,6 +69,9 @@ def build_diagnosis_graph(
             que plan_features ativo.
         scielo_search: opcional callable ``(query) -> JSON-str`` pra
             search_scientific (TCC-055). Idem semantica.
+        upload_svc: opcional ``UploadService`` — quando passado, o
+            ``persist_node`` sobe cada imagem do batch pro Storage e grava a
+            storage key em ``image_url``.
 
     Returns:
         ``CompiledStateGraph`` pronto pra ``.ainvoke()``.
@@ -99,6 +104,7 @@ def build_diagnosis_graph(
             diagnosis_svc=diagnosis_svc,
             inference_svc=inference_svc,
             store=store,
+            upload_svc=upload_svc,
         ),
     )
 

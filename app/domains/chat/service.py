@@ -11,6 +11,11 @@ Sprint A3 (TCC-051): aceita ``SubscriptionRepository`` opcional pra carregar
 ``PlanFeatures`` do usuario e passar pro ``build_graph`` (escolhe LLM model
 dinamico por tier). Quando sub_repo for None, usa default settings.
 
+O conjunto de tools vem do ``tool_registry``: ``_build_tool_factories`` monta o
+dict ``name -> factory`` e ``build_tools`` filtra por ``enabled_globally`` +
+``required_feature`` + ``min_tier`` do plano ativo. Antes disso o service montava
+uma lista fixa de 4 tools e o registry (com as 11) só era exercitado em testes.
+
 Sprint A4.5 (TCC-058/059): introduz HITL via ``langgraph.interrupt()`` —
 quando uma tool dispara interrupt, o grafo pausa, o checkpointer persiste o
 snapshot, e o turno e retomado via ``Command(resume=<resposta>)`` no
@@ -29,26 +34,32 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import Command
 
 from app.domains.chat import agent_state
-from app.domains.chat.agent import build_chat_tools, build_graph
+from app.domains.chat.agent import build_graph
 from app.domains.chat.agent_state import UploadedFileDTO
 from app.domains.chat.repository import ChatMessageRepository, ChatSessionRepository
 from app.domains.chat.schemas import (
+    ChatMessageResponse,
     ChatResponse,
+    ChatSessionSummary,
     CloseSessionResponse,
     InterruptInfo,
     PendingInterrupt,
 )
-from app.domains.diagnoses.schemas import CreateDiagnosisRequest, DiagnosisResponse
+from app.domains.chat.tool_registry import build_tools
+from app.domains.diagnoses.schemas import DiagnosisResponse
 from app.domains.subscriptions.features import FREE_FEATURES, PlanFeatures
 
 if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
     from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph.state import CompiledStateGraph
     from langgraph.store.base import BaseStore
 
     from app.domains.action_plans.service import ActionPlanService
     from app.domains.diagnoses.service import DiagnosisService
     from app.domains.inference.service import InferenceService
     from app.domains.subscriptions.repository import SubscriptionRepository
+    from app.domains.uploads.service import UploadService
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +77,11 @@ class ChatService:
             Callable[[], Awaitable["BaseCheckpointSaver[Any]"]] | None
         ) = None,
         sub_repo: "SubscriptionRepository | None" = None,
+        diagnosis_graph_factory: (
+            Callable[..., "CompiledStateGraph[Any]"] | None
+        ) = None,
+        db_session_factory: Callable[[], Any] | None = None,
+        upload_svc: "UploadService | None" = None,
     ) -> None:
         self._session_repo = session_repo
         self._message_repo = message_repo
@@ -75,8 +91,16 @@ class ChatService:
         self._store_factory = store_factory
         self._checkpointer_factory = checkpointer_factory
         self._sub_repo = sub_repo
-        # Cached compiled graph por (plan_features_key) — built lazily.
-        # Chaveado por hash de plan_features pra permitir LLM-switching por tier.
+        self._diagnosis_graph_factory = diagnosis_graph_factory
+        if db_session_factory is None:
+            from app.db.database import AsyncSessionLocal
+
+            db_session_factory = AsyncSessionLocal
+        self._db_session_factory = db_session_factory
+        self._upload_svc = upload_svc
+        # Cached compiled graph por plan_features.signature() — built lazily.
+        # A assinatura cobre TODAS as flags do plano (não só o tier), porque o
+        # conjunto de tools ativas varia com elas, não apenas o LLM model.
         self._graph_cache: dict[str, Any] = {}
 
     async def _resolve_plan_features(self, user_id: str) -> PlanFeatures:
@@ -91,6 +115,84 @@ class ChatService:
         except Exception:  # noqa: BLE001 — fallback resilient
             return FREE_FEATURES
 
+    def _build_tool_factories(
+        self, store: "BaseStore | None" = None
+    ) -> dict[str, Callable[[], "BaseTool"]]:
+        """Mapa ``nome -> factory`` consumido pelo ``tool_registry``.
+
+        As factories sao zero-arg: capturam os services por closure. Tools cuja
+        dependencia nao esta disponivel (ex: ``deep_diagnose`` sem
+        ``diagnosis_graph_factory``) simplesmente nao entram no dict — o
+        ``build_tools`` pula nomes ativos sem factory correspondente.
+
+        Args:
+            store: ``BaseStore`` ja resolvido, repassado ao sub-grafo pra que o
+                ``persist_node`` indexe os diagnosticos do ``deep_diagnose`` no
+                mesmo namespace que o ``analyze_image`` usa.
+        """
+        from app.domains.chat.tools.analyze_image import build_analyze_image_tool
+        from app.domains.chat.tools.ask_user import build_ask_user_tool
+        from app.domains.chat.tools.compare_diagnoses import (
+            build_compare_diagnoses_tool,
+        )
+        from app.domains.chat.tools.deep_diagnose import build_deep_diagnose_tool
+        from app.domains.chat.tools.get_action_plan import (
+            build_get_action_plan_tool,
+        )
+        from app.domains.chat.tools.get_disease_info import (
+            build_get_disease_info_tool,
+        )
+        from app.domains.chat.tools.identify_crop import build_identify_crop_tool
+        from app.domains.chat.tools.inspect_image import build_inspect_image_tool
+        from app.domains.chat.tools.search_my_diagnoses import (
+            build_search_my_diagnoses_tool,
+        )
+        from app.domains.chat.tools.search_scientific import (
+            build_search_scientific_tool,
+        )
+        from app.domains.chat.tools.search_web import build_search_web_tool
+
+        factories: dict[str, Callable[[], BaseTool]] = {
+            "inspect_image": build_inspect_image_tool,
+            "analyze_image": lambda: build_analyze_image_tool(
+                self._inference_svc,
+                self._diagnosis_svc,
+                store_factory=self._store_factory,
+                upload_svc=self._upload_svc,
+            ),
+            "get_disease_info": lambda: build_get_disease_info_tool(
+                self._db_session_factory
+            ),
+            "get_action_plan": lambda: build_get_action_plan_tool(
+                self._action_plan_svc
+            ),
+            "search_my_diagnoses": lambda: build_search_my_diagnoses_tool(
+                self._store_factory
+            ),
+            "ask_user": build_ask_user_tool,
+            "search_web": build_search_web_tool,
+            "search_scientific": build_search_scientific_tool,
+            "identify_crop": build_identify_crop_tool,
+        }
+
+        # deep_diagnose e compare_diagnoses dependem do sub-grafo; sem a factory
+        # injetada (testes legados, DI parcial) ficam de fora em vez de quebrar.
+        if self._diagnosis_graph_factory is not None:
+            graph_factory = self._diagnosis_graph_factory
+
+            def _subgraph_for(crop_id: str) -> Any:
+                """Fecha o ``store`` no factory — as tools chamam com 1 arg."""
+                return graph_factory(crop_id, store)
+
+            factories["deep_diagnose"] = lambda: build_deep_diagnose_tool(
+                _subgraph_for
+            )
+            factories["compare_diagnoses"] = lambda: build_compare_diagnoses_tool(
+                _subgraph_for
+            )
+
+        return factories
+
     async def _get_graph(self, plan_features: PlanFeatures | None = None) -> Any:
         """Resolve o grafo compilado lazy-init — com checkpointer + plan_features.
 
@@ -98,13 +200,16 @@ class ChatService:
         interrupts list) pra garantir que snapshots persistidos sobrevivem
         a chamadas distintas — requisito do ciclo HITL.
 
-        Cacheia por plan_features (hash da config) — assim tiers diferentes
-        usam grafos com LLM models diferentes sem rebuild a cada turno.
+        As tools vem do ``tool_registry``, filtradas pelas features do plano:
+        Free nao ve ``search_web``/``compare_diagnoses``, Enterprise ve tudo.
+
+        Cacheia por ``plan_features.signature()`` — hash de TODAS as flags, nao
+        so' do tier, porque o tool set muda com elas.
         """
-        # Cache key: plan_features tier_name (default 'free').
-        tier_key = "free" if plan_features is None else plan_features.tier_name
-        if tier_key in self._graph_cache:
-            return self._graph_cache[tier_key]
+        features = plan_features or FREE_FEATURES
+        cache_key = features.signature()
+        if cache_key in self._graph_cache:
+            return self._graph_cache[cache_key]
 
         checkpointer = None
         if self._checkpointer_factory is not None:
@@ -115,16 +220,30 @@ class ChatService:
                     "Checkpointer factory failed — graph runs sem persistencia"
                 )
 
-        tools = build_chat_tools(
-            self._inference_svc, self._action_plan_svc, self._diagnosis_svc
+        # Store resolvido aqui (uma vez por feature-set) pra ser fechado tanto
+        # no analyze_image quanto no sub-grafo do deep_diagnose.
+        store: BaseStore | None = None
+        if self._store_factory is not None:
+            try:
+                store = await self._store_factory()
+            except Exception:  # noqa: BLE001 — memoria semantica e' best-effort
+                logger.exception("Store factory failed — grafo roda sem memoria")
+
+        tools = build_tools(
+            self._build_tool_factories(store), features.model_dump()
+        )
+        logger.info(
+            "Grafo do chat montado pra tier=%s com tools: %s",
+            features.tier_name,
+            ", ".join(t.name for t in tools),
         )
         graph = build_graph(
             tools=tools,
             state_schema=agent_state.ChatState,
-            plan_features=plan_features,
+            plan_features=features,
             checkpointer=checkpointer,
         )
-        self._graph_cache[tier_key] = graph
+        self._graph_cache[cache_key] = graph
         return graph
 
     async def chat(
@@ -176,7 +295,9 @@ class ChatService:
             {
                 "messages": seed_messages,
                 "current_user_id": user_id,
+                "current_session_id": session.id,
                 "selected_model": model_id,
+                "plan_features": plan_features,
                 "uploaded_files": uploaded_files,
                 "diagnoses_in_turn": [],
                 "recent_relevant_diagnoses": recent_relevant,
@@ -245,15 +366,24 @@ class ChatService:
             HumanMessage(content=self._seed_text(message_text, bool(uploaded_files)))
         ]
 
+        # O streaming e' o caminho que a UI realmente usa — sem este pre-fetch
+        # a memoria semantica so' existia no endpoint sincrono.
+        recent_relevant = await self._prefetch_relevant_diagnoses(
+            user_id, message_text
+        )
+
         plan_features = await self._resolve_plan_features(user_id)
         graph = await self._get_graph(plan_features=plan_features)
         config = {"configurable": {"thread_id": session.id}}
         initial_state = {
             "messages": seed_messages,
             "current_user_id": user_id,
+            "current_session_id": session.id,
             "selected_model": model_id,
+            "plan_features": plan_features,
             "uploaded_files": uploaded_files,
             "diagnoses_in_turn": [],
+            "recent_relevant_diagnoses": recent_relevant,
         }
 
         collected_chunks: list[str] = []
@@ -589,31 +719,6 @@ class ChatService:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    async def _run_inference_and_persist(
-        self, user_id: str, image_filename: str, model_id: str
-    ) -> DiagnosisResponse:
-        result = self._inference_svc.predict(model_id, image_filename)
-        body = CreateDiagnosisRequest(
-            disease_name=result.disease_name,
-            disease_id=result.disease_id,
-            scientific_name=result.scientific_name,
-            confidence=result.confidence,
-            severity=result.severity,
-            description=result.description,
-            model_used=result.model_id,
-            image_url=None,
-            image_name=result.image_name,
-            top3=result.top3,
-        )
-        # ``Diagnosis.crop_id`` eh NOT NULL desde 0004 — extrai do catalogo
-        # carregado no InferenceService (todas as diseases sao do mesmo crop).
-        crop_uuid = (
-            self._inference_svc.disease_catalog[0].crop_id
-            if self._inference_svc.disease_catalog
-            else ""
-        )
-        return await self._diagnosis_svc.create(user_id, body, crop_id=crop_uuid)
-
     # ── TCC-079: imagem efêmera (base64) + diagnosis do turno ──────────────────
 
     @staticmethod
@@ -729,6 +834,54 @@ class ChatService:
         return [
             r.value if isinstance(r.value, dict) else dict(r.value)
             for r in results
+        ]
+
+    # ── Historico de conversas ────────────────────────────────────────────────
+
+    async def list_sessions(
+        self, user_id: str, limit: int = 50
+    ) -> list[ChatSessionSummary]:
+        """Conversas do usuario, mais recentes primeiro.
+
+        Sem isto o chat recomecava do zero a cada reload: o backend persistia
+        ``chat_sessions``/``chat_messages`` desde sempre, mas nao havia endpoint
+        de leitura e o frontend nao tinha como voltar numa conversa.
+        """
+        rows = await self._session_repo.list_with_preview(user_id, limit=limit)
+        return [
+            ChatSessionSummary(
+                id=sess.id,
+                title=sess.title,
+                preview=preview,
+                message_count=count,
+                summary_text=sess.summary_text,
+                created_at=sess.created_at,
+                updated_at=sess.updated_at,
+            )
+            for sess, count, preview in rows
+        ]
+
+    async def get_session_messages(
+        self, user_id: str, session_id: str
+    ) -> list[ChatMessageResponse]:
+        """Mensagens de uma conversa, em ordem cronologica.
+
+        Retorna lista vazia quando a sessao nao existe ou nao e' do usuario —
+        o router traduz isso em 404 pra nao vazar existencia de sessao alheia.
+        """
+        session = await self._session_repo.get_by_id(session_id, user_id=user_id)
+        if session is None:
+            return []
+        messages = await self._message_repo.list_by_session(session_id)
+        return [
+            ChatMessageResponse(
+                id=m.id,
+                role=m.role,
+                content=m.content,
+                diagnosis_id=m.diagnosis_id,
+                created_at=m.created_at,
+            )
+            for m in messages
         ]
 
     async def close_session(

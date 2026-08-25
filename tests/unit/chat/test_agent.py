@@ -22,7 +22,6 @@ from app.domains.action_plans.schemas import (
 from app.domains.chat.agent import (
     SYSTEM_PROMPT,
     ChatState,
-    _build_tools,
     build_graph,
 )
 from app.domains.diagnoses.schemas import Top3PredictionSchema
@@ -194,76 +193,47 @@ def _ai_with_tool_call(tool_name: str, args: dict, call_id: str = "call-1") -> A
     )
 
 
-# ── _build_tools direct exercises ──────────────────────────────────────────────
+# ── Tools de apoio ────────────────────────────────────────────────────────────
+#
+# O ``build_graph`` nao monta mais tools sozinho — quem decide o conjunto ativo
+# eh o ``tool_registry`` (ver ``tests/unit/chat/test_tool_registry.py`` e
+# ``test_service_tool_registry.py``). Estes testes exercitam o GRAFO, entao
+# montam aqui um trio minimo de tools sobre os services mockados. O
+# comportamento de cada tool real e' testado em ``tests/unit/chat/tools/``.
 
 
-def test_build_tools_returns_three(mock_inference_svc, mock_action_plan_svc):
-    tools = _build_tools(mock_inference_svc, mock_action_plan_svc)
-    assert len(tools) == 3
-    names = {t.name for t in tools}
-    assert names == {"analyze_image", "get_action_plan", "get_disease_info"}
-
-
-def test_analyze_image_tool_returns_json_with_disease(mock_inference_svc, mock_action_plan_svc):
+def _graph_tools(inference_svc, action_plan_svc):
+    """Trio minimo de tools pros testes de grafo (LLM -> ToolNode -> LLM)."""
     import json as _json
 
-    tools = _build_tools(mock_inference_svc, mock_action_plan_svc)
-    analyze = next(t for t in tools if t.name == "analyze_image")
+    from langchain_core.tools import tool
 
-    raw = analyze.invoke({"image_filename": "folha.jpg", "model_id": "ensemble"})
-    parsed = _json.loads(raw)
+    @tool
+    def analyze_image(image_filename: str, model_id: str) -> str:
+        """Analisa uma imagem de folha de soja com o modelo indicado."""
+        result = inference_svc.predict(model_id, image_filename)
+        return _json.dumps(
+            {
+                "disease_name": result.disease_name,
+                "disease_id": result.disease_id,
+                "confidence": result.confidence,
+            },
+            ensure_ascii=False,
+        )
 
-    assert parsed["disease_id"] == "ferrugem-asiatica"
-    assert parsed["disease_name"] == "Ferrugem Asiática"
-    assert parsed["confidence"] == 0.93
-    assert parsed["severity"] == "alta"
-    assert len(parsed["top3"]) == 3
-    mock_inference_svc.predict.assert_called_once_with("ensemble", "folha.jpg")
+    @tool
+    async def get_action_plan(disease_id: str) -> str:
+        """Plano de acao de uma doenca."""
+        plan = await action_plan_svc.get_by_disease(disease_id)
+        return f"Plano de acao para {plan.disease_id}"
 
+    @tool
+    def get_disease_info(disease_id: str) -> str:
+        """Informacoes sobre uma doenca do catalogo."""
+        disease = inference_svc.get_disease_by_slug(disease_id)
+        return disease.name_pt if disease is not None else f"{disease_id} nao encontrada"
 
-async def test_get_action_plan_tool_aggregates_levels(mock_inference_svc, mock_action_plan_svc):
-    tools = _build_tools(mock_inference_svc, mock_action_plan_svc)
-    plan_tool = next(t for t in tools if t.name == "get_action_plan")
-
-    text = await plan_tool.ainvoke({"disease_id": "ferrugem-asiatica"})
-
-    assert "Plano de ação para ferrugem-asiatica" in text
-    assert "ESSENCIAL" in text
-    assert "CAMPO" in text
-    assert "Aplicar fungicida" in text
-    assert "EMBRAPA" in text
-    mock_action_plan_svc.get_by_disease.assert_awaited_once_with("ferrugem-asiatica")
-
-
-async def test_get_action_plan_tool_handles_not_found(mock_inference_svc, mock_action_plan_svc):
-    mock_action_plan_svc.get_by_disease.side_effect = ValueError("nope")
-    tools = _build_tools(mock_inference_svc, mock_action_plan_svc)
-    plan_tool = next(t for t in tools if t.name == "get_action_plan")
-
-    text = await plan_tool.ainvoke({"disease_id": "unknown"})
-    assert "indisponível" in text.lower()
-
-
-def test_get_disease_info_tool_returns_known_disease(mock_inference_svc, mock_action_plan_svc):
-    import json as _json
-
-    tools = _build_tools(mock_inference_svc, mock_action_plan_svc)
-    info = next(t for t in tools if t.name == "get_disease_info")
-
-    raw = info.invoke({"disease_id": "mancha-alvo"})
-    parsed = _json.loads(raw)
-    assert parsed["id"] == "mancha-alvo"
-    assert parsed["name"] == "Mancha-Alvo"
-    assert "scientific_name" in parsed
-
-
-def test_get_disease_info_tool_handles_unknown(mock_inference_svc, mock_action_plan_svc):
-    tools = _build_tools(mock_inference_svc, mock_action_plan_svc)
-    info = next(t for t in tools if t.name == "get_disease_info")
-
-    text = info.invoke({"disease_id": "doenca-fictícia"})
-    assert "não encontrada" in text
-    assert "ferrugem-asiatica" in text  # lista de válidos
+    return [analyze_image, get_action_plan, get_disease_info]
 
 
 # ── Graph end-to-end com FakeLLM ──────────────────────────────────────────────
@@ -272,7 +242,9 @@ def test_get_disease_info_tool_handles_unknown(mock_inference_svc, mock_action_p
 async def test_graph_no_tool_path(mock_inference_svc, mock_action_plan_svc):
     """LLM responde direto sem chamar tool — caminho mais simples."""
     fake_llm = FakeToolLLM(responses=[AIMessage(content="Olá! Como posso ajudar?")])
-    graph = build_graph(mock_inference_svc, mock_action_plan_svc, llm=fake_llm)
+    graph = build_graph(
+        _graph_tools(mock_inference_svc, mock_action_plan_svc), llm=fake_llm
+    )
 
     result = await graph.ainvoke(_initial_state(user_text="oi"))
 
@@ -294,7 +266,7 @@ async def test_graph_includes_system_prompt_on_first_call(mock_inference_svc, mo
         return AIMessage(content="ok")
 
     fake_llm = FakeToolLLM(responses=[AIMessage(content="ok")])
-    bound = fake_llm.bind_tools(_build_tools(mock_inference_svc, mock_action_plan_svc))
+    bound = fake_llm.bind_tools(_graph_tools(mock_inference_svc, mock_action_plan_svc))
     # Patch ainvoke (object.__setattr__ pra contornar pydantic frozen)
     object.__setattr__(bound, "ainvoke", capturing_invoke)
 
@@ -303,9 +275,8 @@ async def test_graph_includes_system_prompt_on_first_call(mock_inference_svc, mo
     from langgraph.prebuilt import ToolNode, tools_condition
 
     from app.domains.chat.agent import ChatState, _make_llm_node
-    from app.domains.chat.agent import _build_tools as _bt
 
-    tools = _bt(mock_inference_svc, mock_action_plan_svc)
+    tools = _graph_tools(mock_inference_svc, mock_action_plan_svc)
     wf: StateGraph = StateGraph(ChatState)
     wf.add_node("llm", _make_llm_node(bound))
     wf.add_node("tools", ToolNode(tools))
@@ -331,7 +302,9 @@ async def test_graph_analyze_image_path(mock_inference_svc, mock_action_plan_svc
             AIMessage(content="Detectei Ferrugem Asiática com alta confiança."),
         ]
     )
-    graph = build_graph(mock_inference_svc, mock_action_plan_svc, llm=fake_llm)
+    graph = build_graph(
+        _graph_tools(mock_inference_svc, mock_action_plan_svc), llm=fake_llm
+    )
 
     result = await graph.ainvoke(
         _initial_state(user_text="analisa minha folha", image_filename="folha.jpg")
@@ -351,7 +324,9 @@ async def test_graph_get_disease_info_path(mock_inference_svc, mock_action_plan_
             AIMessage(content="Antracnose é causada por Colletotrichum truncatum."),
         ]
     )
-    graph = build_graph(mock_inference_svc, mock_action_plan_svc, llm=fake_llm)
+    graph = build_graph(
+        _graph_tools(mock_inference_svc, mock_action_plan_svc), llm=fake_llm
+    )
 
     result = await graph.ainvoke(_initial_state(user_text="me fala da antracnose"))
 
@@ -369,7 +344,9 @@ async def test_graph_get_action_plan_path(mock_inference_svc, mock_action_plan_s
             AIMessage(content="Recomendo aplicar fungicida triazol + estrobilurina."),
         ]
     )
-    graph = build_graph(mock_inference_svc, mock_action_plan_svc, llm=fake_llm)
+    graph = build_graph(
+        _graph_tools(mock_inference_svc, mock_action_plan_svc), llm=fake_llm
+    )
 
     result = await graph.ainvoke(_initial_state(user_text="o que fazer?"))
 
@@ -394,7 +371,7 @@ async def test_graph_with_default_chatopenai(mock_inference_svc, mock_action_pla
 
     monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
-    graph = build_graph(mock_inference_svc, mock_action_plan_svc)
+    graph = build_graph(_graph_tools(mock_inference_svc, mock_action_plan_svc))
     result = await graph.ainvoke(_initial_state(user_text="oi"))
 
     assert "model" in sentinel_calls["init_kwargs"]
@@ -423,7 +400,8 @@ async def test_graph_uses_free_llm_model_when_plan_is_free(
     monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
     build_graph(
-        mock_inference_svc, mock_action_plan_svc, plan_features=FREE_FEATURES
+        _graph_tools(mock_inference_svc, mock_action_plan_svc),
+        plan_features=FREE_FEATURES,
     )
     assert sentinel_calls["init_kwargs"]["model"] == FREE_FEATURES.llm_model
 
@@ -447,7 +425,8 @@ async def test_graph_uses_pro_llm_model_when_plan_is_pro(
     monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
     build_graph(
-        mock_inference_svc, mock_action_plan_svc, plan_features=PRO_FEATURES
+        _graph_tools(mock_inference_svc, mock_action_plan_svc),
+        plan_features=PRO_FEATURES,
     )
     assert sentinel_calls["init_kwargs"]["model"] == PRO_FEATURES.llm_model
 
@@ -470,5 +449,7 @@ async def test_graph_falls_back_to_settings_when_no_plan_features(
 
     monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
 
-    build_graph(mock_inference_svc, mock_action_plan_svc, plan_features=None)
+    build_graph(
+        _graph_tools(mock_inference_svc, mock_action_plan_svc), plan_features=None
+    )
     assert sentinel_calls["init_kwargs"]["model"] is not None

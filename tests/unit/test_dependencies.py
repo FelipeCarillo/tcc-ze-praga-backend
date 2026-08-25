@@ -114,10 +114,24 @@ def test_get_diagnosis_service():
     from app.core.dependencies import get_diagnosis_service
     from app.domains.diagnoses.repository import DiagnosisRepository
     from app.domains.diagnoses.service import DiagnosisService
+    from app.domains.uploads.service import UploadService
 
     repo = MagicMock(spec=DiagnosisRepository)
-    result = get_diagnosis_service(repo)
+    upload_svc = MagicMock(spec=UploadService)
+    result = get_diagnosis_service(repo, upload_svc)
     assert isinstance(result, DiagnosisService)
+
+
+def test_get_diagnosis_service_recebe_resolvedor_de_imagem():
+    """Sem o resolvedor, ``image_url`` sairia como storage key crua na resposta."""
+    from app.core.dependencies import get_diagnosis_service
+    from app.domains.diagnoses.repository import DiagnosisRepository
+    from app.domains.uploads.service import UploadService
+
+    repo = MagicMock(spec=DiagnosisRepository)
+    upload_svc = MagicMock(spec=UploadService)
+    svc = get_diagnosis_service(repo, upload_svc)
+    assert svc._resolve_image_urls is upload_svc.signed_urls
 
 
 def test_get_action_plan_service():

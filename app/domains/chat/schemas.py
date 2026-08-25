@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 from app.domains.diagnoses.schemas import DiagnosisResponse
@@ -25,6 +27,32 @@ class ChatResponse(BaseModel):
     # o payload do interrupt e o cliente deve renderizar o dialog +
     # disparar POST /chat/resume com a resposta.
     interrupt: InterruptInfo | None = None
+
+
+class ChatSessionSummary(BaseModel):
+    """Uma conversa na lista de historico do chat.
+
+    ``preview`` e' a primeira mensagem do usuario — serve de titulo quando
+    ``title`` e' None (o que e' o caso hoje: nada preenche esse campo ainda).
+    """
+
+    id: str
+    title: str | None = None
+    preview: str | None = None
+    message_count: int = 0
+    summary_text: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatMessageResponse(BaseModel):
+    """Uma mensagem persistida de uma conversa."""
+
+    id: str
+    role: str
+    content: str
+    diagnosis_id: str | None = None
+    created_at: datetime
 
 
 class CloseSessionResponse(BaseModel):

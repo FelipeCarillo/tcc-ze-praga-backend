@@ -18,12 +18,14 @@ from app.core.dependencies import (
     get_current_user_or_api_key,
     get_diagnosis_graph_factory,
     get_diagnosis_repository,
+    get_plan_features_dual,
     get_subscription_repository,
     get_usage_repository,
     get_usage_service,
     require_quota,
     require_quota_dual,
 )
+from app.domains.subscriptions.features import ENTERPRISE_FEATURES
 from app.main import app
 from app.shared.enums import FeatureTypeEnum
 from tests.conftest import make_diagnosis_dto, make_plan_dto, make_subscription_dto, make_user_dto
@@ -93,6 +95,7 @@ async def _client_with_api_key(
 ):
     """Cliente com overrides simulando autenticacao via API key (auth_method='api_key')."""
     app.dependency_overrides[get_current_user_or_api_key] = lambda: make_user_dto()
+    app.dependency_overrides[get_plan_features_dual] = lambda: ENTERPRISE_FEATURES
     app.dependency_overrides[auth_method_dual] = lambda: "api_key"
     app.dependency_overrides[require_quota_dual] = lambda: make_user_dto()
     # Backward-compat
@@ -113,6 +116,7 @@ async def _client_with_jwt(
 ):
     """Cliente com overrides simulando JWT (auth_method='jwt'). Sem rate-limit headers."""
     app.dependency_overrides[get_current_user_or_api_key] = lambda: make_user_dto()
+    app.dependency_overrides[get_plan_features_dual] = lambda: ENTERPRISE_FEATURES
     app.dependency_overrides[auth_method_dual] = lambda: "jwt"
     app.dependency_overrides[require_quota_dual] = lambda: make_user_dto()
     app.dependency_overrides[require_quota(FeatureTypeEnum.INFERENCE)] = (

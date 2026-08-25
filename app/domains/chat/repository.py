@@ -6,7 +6,7 @@ explícito em cada operação de escrita.
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.chat.dto import ChatMessageDTO, ChatSessionDTO
@@ -51,6 +51,50 @@ class ChatSessionRepository:
             .order_by(ChatSession.updated_at.desc())
         )
         return [self._to_dto(s) for s in result.scalars().all()]
+
+    async def list_with_preview(
+        self, user_id: str, limit: int = 50
+    ) -> list[tuple[ChatSessionDTO, int, str | None]]:
+        """Sessoes do usuario com contagem de mensagens e previa da primeira.
+
+        Sessoes vazias sao filtradas: ``get_or_create_for_user`` cria uma linha
+        no inicio de todo turno sem ``session_id``, entao um usuario que abriu o
+        chat e nao mandou nada deixaria conversas fantasma na lista.
+
+        Uma query so' (agregacao + lateral) — a alternativa seria N+1 pra contar
+        e prever cada sessao.
+
+        Returns:
+            Lista de ``(sessao, total_de_mensagens, previa)`` ordenada por
+            ``updated_at`` desc.
+        """
+        first_user_msg = (
+            select(ChatMessage.content)
+            .where(
+                ChatMessage.session_id == ChatSession.id,
+                ChatMessage.role == "user",
+            )
+            .order_by(ChatMessage.created_at.asc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        message_count = (
+            select(func.count(ChatMessage.id))
+            .where(ChatMessage.session_id == ChatSession.id)
+            .scalar_subquery()
+        )
+
+        result = await self._db.execute(
+            select(ChatSession, message_count, first_user_msg)
+            .where(ChatSession.user_id == user_id)
+            .order_by(ChatSession.updated_at.desc())
+            .limit(limit)
+        )
+        return [
+            (self._to_dto(session), int(count or 0), preview)
+            for session, count, preview in result.all()
+            if (count or 0) > 0
+        ]
 
     async def update_summary(
         self, session_id: str, user_id: str, summary_text: str

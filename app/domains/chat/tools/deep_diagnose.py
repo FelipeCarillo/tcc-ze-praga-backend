@@ -75,7 +75,9 @@ def build_deep_diagnose_tool(
             {
                 "user_id": user_id,
                 "crop_id": effective_crop,
-                "image_batch": [],  # nao precisa em mock (predict ignora bytes)
+                # Bytes reais (base64) com index alinhado a image_ids — sem
+                # isto o run_inference_node cai no mock (TCC-020).
+                "image_batch": [f.b64 or "" for f in targets],
                 "image_ids": [f.id for f in targets],
                 "model_id": model_id,
             }

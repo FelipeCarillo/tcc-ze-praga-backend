@@ -125,33 +125,52 @@ ACTION_PLANS = [
         ],
     },
     {
-        "disease_id": "antracnose",
+        # ADR-0003: a antracnose saiu do catálogo junto com a troca do Digipathos
+        # pelo ASDID (que não a cobre) e deu lugar à mancha-olho-de-rã. O seed de
+        # doenças foi atualizado na época, este aqui não — resultado: um plano
+        # órfão de antracnose e uma das 6 classes do modelo SEM plano de ação,
+        # devolvendo "plano indisponível" para um diagnóstico correto.
+        "disease_id": "mancha-olho-de-ra",
         "levels": {
             "essencial": [
-                "Aplique fungicida cúprico ou mancozebe",
-                "Remova restos culturais infectados da área",
-                "Melhore drenagem do solo se houver encharcamento",
-                "Evite ferimentos mecânicos nas plantas",
+                "Aplique fungicida com estrobilurina + triazol nas primeiras lesões",
+                "Anote a cultivar do talhão — a resistência genética é o controle principal",
+                "Monitore a cada 7-10 dias, olhando o terço médio da planta",
             ],
             "campo": [
-                "Realize tratamento de sementes na próxima semeadura",
-                "Implemente rotação de culturas por pelo menos 2 anos",
-                "Monitore entrada de novos materiais na propriedade",
-                "Aplique cobertura de mulch para reduzir respingos",
+                "Inicie o controle químico entre R1 e R3, ao detectar as primeiras lesões",
+                "Escolha cultivares resistentes a Cercospora sojina na próxima safra",
+                "Faça rotação com milho ou outra não hospedeira por 1-2 safras",
+                "Evite semear sobre palhada de soja infectada sem decomposição adequada",
+                "Programe a segunda aplicação em 14-21 dias, rotacionando o grupo químico",
             ],
             "especialista": [
-                "Identifique espécie de Colletotrichum envolvida",
-                "Avalie programa de resistência varietal",
-                "Consulte especialista em fitopatologia",
-                "Implemente protocolo de quarentena para novos insumos",
+                "Diferencie da mancha-alvo: lesão menor (1-5 mm) e sem anéis concêntricos",
+                "Considere resistência a QoI (mutação G143A) — nunca use estrobilurina isolada",
+                (
+                    "Acompanhe o monitoramento regional de raças — a resistência "
+                    "é governada por genes Rcs"
+                ),
+                (
+                    "Garanta cobertura do terço médio e inferior do dossel "
+                    "(150 L/ha, gotas finas a médias)"
+                ),
             ],
         },
         "sources": [
             {
-                "name": "MAPA",
-                "detail": "Defesa Agropecuária — Controle de Doenças",
-                "url": "https://www.gov.br/agricultura",
+                "name": "EMBRAPA Soja",
+                "detail": "Manejo de doenças foliares da soja — mancha olho-de-rã",
+                "url": "https://www.embrapa.br/soja",
                 "display_order": 0,
+            },
+            {
+                "name": "Zhang, G. et al. (2018)",
+                "detail": (
+                    "Frogeye leaf spot of soybean: pathogen biology and QoI "
+                    "resistance. Plant Disease, 102(12)"
+                ),
+                "display_order": 1,
             },
         ],
     },

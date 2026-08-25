@@ -5,6 +5,11 @@ filtragem (``enabled_globally``, ``required_feature``, ``min_tier``). A
 funcao ``get_active_tool_names`` resolve qual subset de tools deve estar
 ativo pra um dado plano/feature flags.
 
+``inspect_image`` e ``analyze_image`` (TCC-079) sao posteriores ao desenho
+original do registry e foram registradas depois: sao o caminho default de
+imagem unica no chat, enquanto ``deep_diagnose`` cobre o batch multi-imagem
+via sub-grafo. A escolha entre as duas e' instruida no ``SYSTEM_PROMPT``.
+
 Em runtime, o ``ChatService`` consome este modulo pra montar a lista de
 tools que sera bindada no LLM. O esquema fica desacoplado de DI: as
 factories sao passadas como ``dict[name -> Callable[[], BaseTool]]``
@@ -63,13 +68,37 @@ def get_registry() -> list[ToolConfig]:
     """
     return [
         ToolConfig(
+            name="inspect_image",
+            version=1,
+            factory_key="inspect_image",
+            enabled_globally=True,
+            required_feature=None,
+            min_tier=None,
+            description=(
+                "Gate de visao: diz se a imagem e' planta/folha analisavel."
+            ),
+        ),
+        ToolConfig(
+            name="analyze_image",
+            version=1,
+            factory_key="analyze_image",
+            enabled_globally=True,
+            required_feature=None,
+            min_tier=None,
+            description=(
+                "Diagnostica UMA imagem do turno e persiste o Diagnosis."
+            ),
+        ),
+        ToolConfig(
             name="deep_diagnose",
             version=1,
             factory_key="deep_diagnose",
             enabled_globally=True,
             required_feature=None,
             min_tier=None,
-            description="Diagnostica imagens via sub-grafo ML + plano de acao.",
+            description=(
+                "Diagnostica MULTIPLAS imagens via sub-grafo ML + evidencia."
+            ),
         ),
         ToolConfig(
             name="get_disease_info",

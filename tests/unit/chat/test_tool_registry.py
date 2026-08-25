@@ -22,7 +22,11 @@ def _dummy_tool() -> str:
     return "ok"
 
 
+# Tools ativas pro Free tier com as flags default. ``identify_crop`` fica de
+# fora (V2 dormente, ``agent_enable_identify_crop`` OFF).
 _BASE_TOOL_NAMES = [
+    "inspect_image",
+    "analyze_image",
     "deep_diagnose",
     "get_disease_info",
     "get_action_plan",
@@ -291,9 +295,17 @@ def test_tool_config_is_frozen() -> None:
 
 
 def test_default_registry_has_all_tools_post_a4_a4_5() -> None:
-    """Smoke-test: 8 v1 (5 base + compare + search_web + search_scientific) + 1 v2 (identify_crop)."""
+    """Smoke-test do registry: 10 v1 + 1 v2 (identify_crop).
+
+    ``inspect_image`` e ``analyze_image`` (TCC-079) entraram no registry quando o
+    ``ChatService`` passou a montar as tools por aqui em vez de usar uma lista
+    fixa. Estar no registry nao quer dizer estar ativo — ``ask_user`` e
+    ``identify_crop`` dependem de kill-switch.
+    """
     cfgs = get_registry()
     assert {c.name for c in cfgs} == {
+        "inspect_image",
+        "analyze_image",
         "deep_diagnose",
         "get_disease_info",
         "get_action_plan",
@@ -306,7 +318,7 @@ def test_default_registry_has_all_tools_post_a4_a4_5() -> None:
     }
     v1_cfgs = [c for c in cfgs if c.version == 1]
     v2_cfgs = [c for c in cfgs if c.version == 2]
-    assert len(v1_cfgs) == 8
+    assert len(v1_cfgs) == 10
     assert len(v2_cfgs) == 1
     by_name = {c.name: c for c in cfgs}
     base_tools = {"deep_diagnose", "get_disease_info", "get_action_plan", "search_my_diagnoses"}

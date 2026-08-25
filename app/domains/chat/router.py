@@ -31,7 +31,9 @@ from app.core.dependencies import (
 )
 from app.domains.auth.dto import UserDTO
 from app.domains.chat.schemas import (
+    ChatMessageResponse,
     ChatResponse,
+    ChatSessionSummary,
     CloseSessionResponse,
     PendingInterrupt,
     ResumeRequest,
@@ -230,6 +232,40 @@ async def list_interrupts(
 ) -> list[PendingInterrupt]:
     """Lista sessoes do usuario com interrupt pendente aguardando resposta."""
     return await chat_svc.list_pending_interrupts(current_user.id)
+
+
+@sessions_router.get(
+    "", response_model=list[ChatSessionSummary], status_code=200
+)
+async def list_sessions(
+    limit: int = 50,
+    current_user: UserDTO = Depends(get_current_user),
+    chat_svc: ChatService = Depends(get_chat_service),
+) -> list[ChatSessionSummary]:
+    """Conversas do usuario, mais recentes primeiro (sessoes vazias filtradas)."""
+    return await chat_svc.list_sessions(current_user.id, limit=limit)
+
+
+@sessions_router.get(
+    "/{session_id}/messages",
+    response_model=list[ChatMessageResponse],
+    status_code=200,
+)
+async def get_session_messages(
+    session_id: str,
+    current_user: UserDTO = Depends(get_current_user),
+    chat_svc: ChatService = Depends(get_chat_service),
+) -> list[ChatMessageResponse]:
+    """Mensagens de uma conversa — permite reabrir o chat onde parou."""
+    messages = await chat_svc.get_session_messages(current_user.id, session_id)
+    if not messages:
+        # Sessao inexistente, de outro usuario, ou vazia: 404 nos tres casos
+        # (nao distinguir evita vazar a existencia de sessao alheia).
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversa nao encontrada.",
+        )
+    return messages
 
 
 @sessions_router.post(

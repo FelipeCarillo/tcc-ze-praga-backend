@@ -56,6 +56,51 @@ def normalize_model_id(model_id: str | None) -> str:
     key = model_id.strip().lower().replace("-", "").replace("_", "").replace("/", "")
     return _MODEL_ALIASES.get(key, ENSEMBLE)
 
+
+# Ordem de preferência (melhor primeiro) — usada para escolher o melhor modelo
+# permitido quando o plano do usuário não cobre o que ele pediu. Segue a acurácia
+# medida no test set: ensemble 99,10% > EfficientNet-B4 98,77% > ViT-B/16 98,03%
+# > ResNet-50 95,99% (model-playground/artifacts/RESULTS.md).
+_MODEL_PREFERENCE: tuple[str, ...] = (ENSEMBLE, EFFICIENTNET_B4, VIT_B16, RESNET50)
+
+
+def resolve_allowed_model(
+    requested: str | None, allowed: list[str] | None
+) -> tuple[str, bool]:
+    """Resolve o modelo efetivo respeitando os modelos liberados pelo plano.
+
+    O vocabulário difere entre as pontas — o chat manda ``efficientnet``/``vit``,
+    o REST manda ``efficientnet_b4``/``vit_b16`` e ``PlanFeatures.diagnosis_models``
+    usa os aliases do chat. Normaliza os dois lados antes de comparar.
+
+    Quando o modelo pedido não está no plano, cai no **melhor permitido** em vez
+    de estourar 403 — negar no meio de um turno de chat quebraria o fluxo do
+    agente por uma questão de billing.
+
+    Args:
+        requested: id do modelo pedido (qualquer vocabulário) ou ``None``.
+        allowed: modelos liberados pelo plano. ``None`` ou vazio = sem gate.
+
+    Returns:
+        ``(canonical_model_id, downgraded)`` — ``downgraded`` é ``True`` quando o
+        pedido foi substituído, para o caller poder avisar o usuário.
+    """
+    canonical = normalize_model_id(requested)
+    if not allowed:
+        return canonical, False
+
+    allowed_canonical = {normalize_model_id(m) for m in allowed}
+    if canonical in allowed_canonical:
+        return canonical, False
+
+    for candidate in _MODEL_PREFERENCE:
+        if candidate in allowed_canonical:
+            return candidate, True
+
+    # Plano com lista de modelos que não normaliza pra nada conhecido —
+    # defensivo: mantém o pedido em vez de travar o diagnóstico.
+    return canonical, False
+
 # Metadados de fallback para as 6 classes do modelo — usados quando o catálogo
 # do banco ainda não tem o slug previsto (ex.: antes de re-rodar o seed que
 # troca antracnose -> mancha-olho-de-ra, ADR-0003). Garante rótulo correto
