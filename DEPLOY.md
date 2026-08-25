@@ -24,8 +24,8 @@ Falta:
 1. **service_role key** — não sai pela API, só pelo painel
    (Project Settings → API).
 2. **Bucket de Storage** — criar no painel.
-3. **Space do Hugging Face** — criar e empurrar (seção 3). É a única etapa que
-   não dá para automatizar: os 507 MB de ONNX vão por `git push` com LFS.
+3. **Serviço no Cloud Run** — criar o projeto no GCP com faturamento
+   vinculado e rodar `scripts/deploy/cloudrun.ps1` (seção 3).
 4. **Variáveis na Vercel** — definir no painel (seção 4).
 5. **Commitar o frontend** — as telas de verificação de e-mail ainda estão só
    na máquina local; o deploy atual foi feito do `main` do GitHub, sem elas.
@@ -37,7 +37,7 @@ Falta:
 | Peça | Onde roda | Custo |
 |---|---|---|
 | Frontend (React) | Vercel | Grátis (Hobby) |
-| Backend (FastAPI + ONNX) | Hugging Face Spaces, SDK Docker | Grátis (CPU basic) |
+| Backend (FastAPI + ONNX) | Google Cloud Run (container) | Free tier + ~R$1/mês de imagem |
 | Banco + Storage | Supabase | Grátis |
 | E-mail transacional | Resend | Grátis |
 
@@ -57,10 +57,18 @@ Três impedimentos, nenhum contornável sem mutilar o projeto:
    start no primeiro request. Serverless recria o processo a cada invocação e
    joga esse trabalho fora.
 
-O Hugging Face Spaces resolve os três: container de verdade, processo
-persistente e **16 GB de RAM** no tier gratuito — folga para os três modelos e
-o ensemble. Como bônus, o Space é um repositório Git com LFS nativo, que é
-exatamente como os `.onnx` já estão versionados.
+O Cloud Run resolve os três: container de verdade (imagem sem o limite de
+250 MB), processo persistente enquanto atende, e sem teto de 29 s como o do
+API Gateway da AWS — o `--timeout 3600` cobre SSE longo. Escala a zero, então
+parado não custa nada.
+
+O Hugging Face Spaces foi a primeira escolha e caiu: no plano gratuito só o
+SDK Gradio estava disponível, e o projeto precisa de Docker.
+
+**Não é literalmente grátis.** O free tier mensal do Cloud Run (2 M requisições,
+360.000 GiB-s, 180.000 vCPU-s) cobre a demonstração com folga — a 4 GiB e
+2 vCPU dá cerca de 25 h/mês de tempo servindo. Mas a imagem de ~2 GB passa dos
+0,5 GB gratuitos do Artifact Registry, o que dá algo perto de **R$ 1 por mês**.
 
 ---
 
@@ -71,8 +79,9 @@ exatamente como os `.onnx` já estão versionados.
 2. **`DATABASE_URL` — use o pooler, não a conexão direta.**
 
    O host direto que o painel mostra (`db.<ref>.supabase.co`) resolve **apenas
-   em IPv6**. Se o container do Space não tiver egress IPv6 — e normalmente não
-   tem — o backend não conecta e morre no boot, sem mensagem que aponte a causa.
+   em IPv6**. Se o container não tiver egress IPv6 — e o Cloud Run, por padrão,
+   não tem — o backend não conecta e morre no boot, sem mensagem que aponte a
+   causa.
 
    O pooler (Supavisor) responde em IPv4. Use **modo sessão, porta 5432**: ele
    se comporta como conexão direta e mantém prepared statements, de que o
@@ -126,46 +135,65 @@ aparece no terminal.
 
 ---
 
-## 3. Hugging Face Space — backend
+## 3. Google Cloud Run — backend
 
-1. **New Space** em <https://huggingface.co/new-space>:
-   - SDK: **Docker** (blank template)
-   - Hardware: **CPU basic** (gratuito)
-   - Visibilidade: Public (o cadastro fica fechado pela verificação de e-mail,
-     não pela visibilidade do Space)
-2. Adicione o Space como um segundo remote do repositório do backend e empurre:
+### Uma vez, no console
+
+1. Crie o projeto em <https://console.cloud.google.com/projectcreate>.
+2. Vincule uma **conta de faturamento** (Billing → Link a billing account). O
+   Cloud Run exige, mesmo quando o consumo fica dentro do free tier.
+3. Instale e autentique o gcloud:
 
 ```bash
-git remote add space https://huggingface.co/spaces/SEU_USUARIO/ze-praga-api
-git push space main
+winget install Google.CloudSDK
 ```
 
-O `README.md` já traz o bloco YAML que o Space exige (`sdk: docker`,
-`app_port: 8000`) e o `Dockerfile` já roda com UID 1000, que é o que o Spaces
-espera. Os `.onnx` sobem por LFS.
+```bash
+gcloud auth login
+```
 
-3. **Settings → Variables and secrets** — cadastre como *Secret*:
+### O deploy
 
-| Variável | Valor |
-|---|---|
-| `DATABASE_URL` | `postgresql+asyncpg://...` do Supabase |
-| `SUPABASE_URL` | Project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | chave service_role |
-| `JWT_SECRET_KEY` | string longa e aleatória — **gere uma nova, não reaproveite a de dev** |
-| `OPENAI_API_KEY` | sua chave |
-| `RESEND_API_KEY` | `re_...` |
-| `EMAIL_FROM` | `Zé Praga <onboarding@resend.dev>` |
-| `REQUIRE_EMAIL_VERIFICATION` | `true` — **é isto que fecha o cadastro** |
-| `PUBLIC_API_URL` | `https://SEU_USUARIO-ze-praga-api.hf.space` |
-| `FRONTEND_URL` | `https://SEU_PROJETO.vercel.app` |
-| `ALLOWED_ORIGINS` | `https://SEU_PROJETO.vercel.app` (sem barra no fim) |
-| `APP_ENV` | `production` |
+Os segredos ficam em `scripts/deploy/cloudrun.env` (ignorado pelo git). Depois:
 
-Confira em `GET /api/v1/health` quando terminar de subir.
+```powershell
+.\scripts\deploy\cloudrun.ps1 -ProjectId SEU_PROJETO_GCP
+```
 
-> **Não pule o `REQUIRE_EMAIL_VERIFICATION=true`.** O default é `false` para
-> não atrapalhar dev e testes. Com `false` em produção, `POST /auth/register`
-> fica aberto e qualquer um cria conta e gasta seu crédito de LLM.
+O script habilita as APIs (`run`, `cloudbuild`, `artifactregistry`), manda o
+código pro Cloud Build e publica com estes parâmetros:
+
+| Flag | Valor | Por quê |
+|---|---|---|
+| `--memory` | `4Gi` | cabe o ensemble dos três ONNX |
+| `--cpu` | `2` | inferência é CPU-bound |
+| `--concurrency` | `4` | mais que isso e 2 vCPU disputam entre si na inferência |
+| `--timeout` | `3600` | o chat é SSE longo; o default de 300 s cortaria |
+| `--min-instances` | `0` | escala a zero — parado não custa |
+| `--max-instances` | `2` | teto contra abuso e contra surpresa na fatura |
+
+Depois do primeiro deploy o script lê a URL gerada, grava em `cloudrun.env` e
+reaplica como `PUBLIC_API_URL`. **Isso não é detalhe:** é a URL que vai dentro
+do link do e-mail de confirmação. Errada, ninguém consegue ativar a conta.
+
+Ao final ele bate em `GET /api/v1/health` e mostra a URL para você colar na
+Vercel.
+
+> **Não pule o `REQUIRE_EMAIL_VERIFICATION=true`** (já vem assim no
+> `cloudrun.env`). O default do código é `false` para não atrapalhar dev e
+> testes. Com `false` em produção, `POST /auth/register` fica aberto e qualquer
+> um cria conta e gasta seu crédito de LLM.
+
+### Cold start
+
+A imagem tem ~2 GB. Depois de um tempo ociosa, a instância morre e a próxima
+chamada paga o custo de subir tudo de novo mais inicializar as sessões ONNX —
+pode passar de 30 s. Antes de apresentar para a banca, faça uma chamada em
+`/api/v1/health` para aquecer.
+
+Se quiser eliminar isso durante a apresentação, `--min-instances 1` mantém uma
+instância viva — mas aí ela é cobrada continuamente e sai do free tier. Ligue
+antes, desligue depois.
 
 ---
 
@@ -178,12 +206,13 @@ Confira em `GET /api/v1/health` quando terminar de subir.
 
 | Variável | Valor |
 |---|---|
-| `REACT_APP_API_URL` | `https://SEU_USUARIO-ze-praga-api.hf.space` |
+| `REACT_APP_API_URL` | URL que o `cloudrun.ps1` imprimiu ao final |
 | `REACT_APP_AUTH_MODE` | `api` |
 | `REACT_APP_USE_MOCK` | `false` |
 
-4. Deploy. Depois volte ao Space e ajuste `FRONTEND_URL` e `ALLOWED_ORIGINS`
-   com o domínio real que a Vercel gerou.
+4. Deploy. Depois ajuste `FRONTEND_URL` e `ALLOWED_ORIGINS` em
+   `scripts/deploy/cloudrun.env` com o domínio real que a Vercel gerou e rode
+   o `cloudrun.ps1` de novo (ele atualiza o serviço no lugar).
 
 ---
 
@@ -195,7 +224,7 @@ Confira em `GET /api/v1/health` quando terminar de subir.
 cp scripts/deploy/deploy.local.example.json scripts/deploy/deploy.local.json
 ```
 
-Preencha com o token do Hugging Face, o do Supabase e (opcional) o da Vercel.
+Preencha com o ID do projeto GCP, o token do Supabase e (opcional) o da Vercel.
 O arquivo já está no `.gitignore`.
 
 ```powershell
@@ -204,12 +233,18 @@ O arquivo já está no `.gitignore`.
 .\scripts\deploy\zepraga.ps1 -Acao ligar
 ```
 
-**Desligar** pausa o Space e depois o projeto Supabase — nessa ordem, para que
-a API já esteja fora do ar quando o banco sumir. Nada responde, nada gasta.
+**Desligar** fecha o acesso público do Cloud Run e depois pausa o Supabase —
+nessa ordem, para que a API já esteja fora do ar quando o banco sumir.
+
+Fechar o acesso é remover o binding `allUsers` do papel `run.invoker`: a API
+passa a responder 403 na hora, e reabrir é um comando. Não dá para usar
+`--max-instances=0` — o Cloud Run exige no mínimo 1. Como o serviço já escala a
+zero, parado ele não custa nada de qualquer jeito; o que se ganha aqui é fechar
+a porta, não economizar. Nada responde, nada gasta.
 **Ligar** faz o inverso: banco primeiro, porque a API roda migrations no boot e
 precisa do Postgres de pé.
 
-Religar leva ~2 min (o Supabase demora mais que o Space). Se algum passo
+Religar leva ~2 min (o Supabase demora mais que o Cloud Run). Se algum passo
 falhar, o script imprime o link do painel para fazer no braço — o botão manual
 sempre funciona.
 
@@ -222,8 +257,8 @@ preciso: sem backend ele é uma página estática que não faz nada.
 
 Ordenadas pelo que efetivamente barra alguém:
 
-1. **Desligado** — Space e Supabase pausados. Superfície zero. É o estado
-   padrão fora de demonstrações.
+1. **Desligado** — Cloud Run sem acesso público e Supabase pausado. Superfície
+   zero. É o estado padrão fora de demonstrações.
 2. **Verificação de e-mail** (`REQUIRE_EMAIL_VERIFICATION=true`) — a conta
    nasce inativa; só o link do e-mail a ativa. Com o remetente sandbox do
    Resend, na prática só o dono da conta Resend consegue se cadastrar.
