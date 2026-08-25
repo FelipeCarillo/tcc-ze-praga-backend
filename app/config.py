@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     email_from: str = "Zé Praga <onboarding@resend.dev>"
     email_verification_ttl_hours: int = 24
 
+    # TTL do link de redefinição de senha. Bem menor que o de verificação: este
+    # token troca a credencial de acesso, então quanto menor a janela, melhor.
+    password_reset_ttl_hours: int = 2
+
     # Gate de cadastro: com ``True`` o usuário nasce inativo e só o link do
     # e-mail o ativa. Default OFF pra não quebrar dev/testes — ligue em produção.
     require_email_verification: bool = False

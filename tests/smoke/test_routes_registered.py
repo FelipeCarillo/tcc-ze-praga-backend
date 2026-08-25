@@ -21,6 +21,10 @@ EXPECTED_PATHS = {
     # então uma rota faltando aqui quebraria confirmação de conta em produção.
     f"{API}/auth/verify",
     f"{API}/auth/resend-verification",
+    # Reset de senha (TCC-092) — rota faltando aqui deixaria quem esqueceu a
+    # senha sem saida, e o unico sintoma seria um 404 na tela.
+    f"{API}/auth/forgot-password",
+    f"{API}/auth/reset-password",
     f"{API}/users/me",
     f"{API}/diagnoses",
     f"{API}/diagnoses/analyze",

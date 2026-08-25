@@ -1,20 +1,3 @@
----
-title: Ze Praga API
-emoji: 🌱
-colorFrom: green
-colorTo: yellow
-sdk: docker
-app_port: 8000
-pinned: false
----
-
-<!--
-O bloco YAML acima é exigido pelo Hugging Face Spaces (o Space é servido a
-partir deste mesmo repositório, via remote `space`). No GitHub ele aparece como
-uma tabelinha no topo do README — inofensivo. Não remova: sem ele o Space não
-sobe. Detalhes do deploy em DEPLOY.md.
--->
-
 # Zé Praga — Backend
 
 API REST do sistema de diagnóstico de doenças em plantas, desenvolvida como parte do TCC. Este repositório é o **core service** — responsável por autenticação, histórico de diagnósticos, planos de ação e controle de uso. As rotas de chatbot e inferência ML estão em repositório separado.

@@ -18,6 +18,17 @@ class ResendVerificationRequest(BaseModel):
     email: EmailStr
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=16)
+    # Mesmo piso do cadastro — não faria sentido o reset aceitar senha mais
+    # fraca do que o RegisterRequest exige.
+    password: str = Field(min_length=6)
+
+
 class UserResponse(BaseModel):
     id: str
     email: str

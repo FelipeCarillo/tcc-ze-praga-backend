@@ -1,0 +1,89 @@
+# Deploy contínuo no Cloud Run a cada push na main (TCC-093).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUE O PASSO 1 EXISTE — leia antes de mexer
+#
+# Os três .onnx estão no repositório via **Git LFS**. O que o Cloud Build clona
+# do GitHub são os ponteiros de 134 bytes, não os 485 MB de modelo.
+#
+# Se a imagem for construída com esses ponteiros, o serviço sobe **saudável**:
+# o InferenceService não acha um ONNX válido e cai no mock por degradação
+# graciosa. O /health responde 200, os testes passam, e a API devolve
+# diagnósticos aleatórios em produção sem nenhum sinal de erro.
+#
+# Por isso os modelos vêm do Cloud Storage, não do git. Copiar do GCS é mais
+# rápido, não consome a cota de banda do GitHub LFS (~1 GB/mês, que dois builds
+# esgotariam) e é reproduzível.
+#
+# Quando treinar um modelo novo, suba pro bucket:
+#   gcloud storage cp models/* gs://ze-praga-tcc-models/models/
+# ─────────────────────────────────────────────────────────────────────────────
+
+substitutions:
+  _REGION: us-east1
+  _SERVICE: ze-praga-api
+  _MODELS_BUCKET: gs://ze-praga-tcc-models
+  _REPO: cloud-run-source-deploy
+
+steps:
+  # 1) Modelos reais por cima dos ponteiros do LFS.
+  - id: modelos
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        gcloud storage cp "${_MODELS_BUCKET}/models/*" models/
+        echo "--- modelos em models/ ---"
+        ls -l models/
+        # Trava de segurança: um .onnx com poucos KB é ponteiro de LFS, não
+        # modelo. Falhar aqui é infinitamente melhor que servir mock calado.
+        for f in models/*.onnx; do
+          tamanho=$(stat -c%s "$f")
+          if [ "$tamanho" -lt 1000000 ]; then
+            echo "ERRO: $f tem só $tamanho bytes — ponteiro de LFS, não modelo."
+            exit 1
+          fi
+        done
+        echo "OK: os três ONNX têm tamanho de modelo real."
+
+  # 2) Imagem.
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}
+
+  # 3) Publica. Só a imagem muda: memória, CPU, timeout e variáveis de ambiente
+  #    ficam como estão no serviço — segredo nenhum passa por aqui.
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+      - --region=${_REGION}
+      - --quiet
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 2400s

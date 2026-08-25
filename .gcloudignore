@@ -1,0 +1,32 @@
+# Contexto enviado ao Cloud Build no `gcloud run deploy --source .`.
+#
+# Sem este arquivo o gcloud deriva as regras do .gitignore — o que subiria a
+# .venv (340 MB) junto. Explicitar aqui evita esse acidente e deixa claro o que
+# vai pra nuvem.
+#
+# ATENÇÃO: models/ NÃO entra nesta lista. Os .onnx (485 MB) precisam ir para a
+# imagem — é o que o InferenceService carrega. Sem eles o serviço sobe mas cai
+# no mock.
+
+.git
+.gitignore
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage
+
+# Segredos nunca sobem no contexto: em produção vêm de variáveis do Cloud Run.
+.env
+.env.*
+!.env.example
+scripts/deploy/deploy.local.json
+
+# Não fazem parte do runtime.
+tests/
+artifacts/
+alembic/versions/__pycache__
+DEPLOY.md

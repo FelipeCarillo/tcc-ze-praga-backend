@@ -11,7 +11,11 @@ from app.db.database import AsyncSessionLocal
 from app.domains.auth.api_key_repository import ApiKeyRepository
 from app.domains.auth.api_key_service import ApiKeyService
 from app.domains.auth.dto import UserDTO
-from app.domains.auth.repository import EmailVerificationRepository, UserRepository
+from app.domains.auth.repository import (
+    EmailVerificationRepository,
+    PasswordResetRepository,
+    UserRepository,
+)
 from app.domains.auth.service import AuthService
 from app.shared.enums import FeatureTypeEnum
 
@@ -131,13 +135,20 @@ def get_email_verification_repository(
     return EmailVerificationRepository(db)
 
 
+def get_password_reset_repository(
+    db: AsyncSession = Depends(get_db),
+) -> PasswordResetRepository:
+    return PasswordResetRepository(db)
+
+
 def get_auth_service(
     repo: UserRepository = Depends(get_user_repository),
     verification_repo: EmailVerificationRepository = Depends(get_email_verification_repository),
+    reset_repo: PasswordResetRepository = Depends(get_password_reset_repository),
 ) -> AuthService:
     # O sender fica None: o service resolve via get_email_sender() na hora do
     # envio, caindo no NullEmailSender quando nao ha RESEND_API_KEY (TCC-090).
-    return AuthService(repo, verification_repo)
+    return AuthService(repo, verification_repo, reset_repo=reset_repo)
 
 
 def get_api_key_repository(db: AsyncSession = Depends(get_db)) -> ApiKeyRepository:

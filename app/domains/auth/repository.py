@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.auth.dto import EmailVerificationTokenDTO, UserCreateDTO, UserDTO
 from app.models.email_verification_token import EmailVerificationToken
+from app.models.password_reset_token import PasswordResetToken
 from app.models.user import User
 
 
@@ -61,8 +62,19 @@ class UserRepository:
         )
 
 
-class EmailVerificationRepository:
-    """Persistência dos tokens de verificação de e-mail (TCC-090)."""
+class _TokenRepository:
+    """Persistência de tokens de uso único (verificação de e-mail, reset de senha).
+
+    Os dois fluxos têm exatamente a mesma mecânica — emitir, achar pelo hash,
+    marcar usado, queimar os pendentes — e só mudam de tabela. A subclasse
+    informa qual model usar em ``_model``.
+    """
+
+    # Tipado com um dos dois models concretos de propósito. Uma união aqui faria
+    # o mypy juntar os tipos no ancestral comum (``Base``), que não declara as
+    # colunas — e todo acesso a ``used_at``/``user_id`` viraria erro. As duas
+    # tabelas têm exatamente a mesma forma, então tipar por uma descreve as duas.
+    _model: type[EmailVerificationToken]
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -70,9 +82,7 @@ class EmailVerificationRepository:
     async def create(
         self, user_id: str, token_hash: str, expires_at: datetime
     ) -> EmailVerificationTokenDTO:
-        token = EmailVerificationToken(
-            user_id=user_id, token_hash=token_hash, expires_at=expires_at
-        )
+        token = self._model(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
         self._db.add(token)
         await self._db.commit()
         await self._db.refresh(token)
@@ -80,15 +90,13 @@ class EmailVerificationRepository:
 
     async def find_by_hash(self, token_hash: str) -> EmailVerificationTokenDTO | None:
         result = await self._db.execute(
-            select(EmailVerificationToken).where(EmailVerificationToken.token_hash == token_hash)
+            select(self._model).where(self._model.token_hash == token_hash)
         )
         token = result.scalar_one_or_none()
         return self._to_dto(token) if token else None
 
     async def mark_used(self, token_id: str) -> None:
-        result = await self._db.execute(
-            select(EmailVerificationToken).where(EmailVerificationToken.id == token_id)
-        )
+        result = await self._db.execute(select(self._model).where(self._model.id == token_id))
         token = result.scalar_one_or_none()
         if not token:
             return
@@ -98,13 +106,13 @@ class EmailVerificationRepository:
     async def invalidate_pending(self, user_id: str) -> None:
         """Queima os tokens ainda abertos do usuário.
 
-        Chamado antes de emitir um novo (reenvio) — assim só o último link
-        recebido funciona, e um e-mail antigo interceptado não serve mais.
+        Chamado antes de emitir um novo — assim só o último link recebido
+        funciona, e um e-mail antigo interceptado não serve mais.
         """
         result = await self._db.execute(
-            select(EmailVerificationToken).where(
-                EmailVerificationToken.user_id == user_id,
-                EmailVerificationToken.used_at.is_(None),
+            select(self._model).where(
+                self._model.user_id == user_id,
+                self._model.used_at.is_(None),
             )
         )
         now = datetime.now(UTC)
@@ -122,3 +130,18 @@ class EmailVerificationRepository:
             used_at=token.used_at,
             created_at=token.created_at,
         )
+
+
+class EmailVerificationRepository(_TokenRepository):
+    """Tokens de confirmação de e-mail (TCC-090)."""
+
+    _model = EmailVerificationToken
+
+
+class PasswordResetRepository(_TokenRepository):
+    """Tokens de redefinição de senha (TCC-092)."""
+
+    # ignore[assignment]: model diferente, forma idêntica — ver a nota em
+    # ``_TokenRepository._model``. O schema das duas tabelas é o mesmo, e a
+    # migration 0011 espelha a 0010 coluna por coluna.
+    _model = PasswordResetToken  # type: ignore[assignment]

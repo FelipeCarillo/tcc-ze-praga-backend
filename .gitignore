@@ -209,3 +209,6 @@ __marimo__/
 
 # Credenciais do interruptor de producao (scripts/deploy/zepraga.ps1)
 scripts/deploy/deploy.local.json
+
+# Variaveis de producao do Cloud Run (scripts/deploy/cloudrun.ps1)
+scripts/deploy/cloudrun.env

@@ -1,14 +1,12 @@
 {
   "_comentario": "Copie para deploy.local.json (ignorado pelo git) e preencha. Nunca versione o arquivo preenchido.",
-
-  "_hf": "Token em https://huggingface.co/settings/tokens (precisa de permissao de escrita). hf_space no formato usuario/nome-do-space.",
-  "hf_token": "hf_SEU_TOKEN_AQUI",
-  "hf_space": "FelipeCarillo/ze-praga-api",
-
+  "_gcp": "Usado pelo zepraga.ps1 para ligar/desligar o backend. Precisa de 'gcloud auth login' feito na maquina. gcp_region e gcp_service sao opcionais (default us-east1 / ze-praga-api).",
+  "gcp_project": "SEU_PROJETO_GCP",
+  "gcp_region": "us-east1",
+  "gcp_service": "ze-praga-api",
   "_supabase": "Token em https://supabase.com/dashboard/account/tokens. O ref e o ID do projeto (aparece na URL do dashboard).",
   "supabase_access_token": "sbp_SEU_TOKEN_AQUI",
   "supabase_project_ref": "majcxiebwxkakvffnodj",
-
   "_vercel": "Opcional, so usado com -IncluirVercel. Token em https://vercel.com/account/tokens.",
   "vercel_token": "SEU_TOKEN_AQUI",
   "vercel_project_id": "prj_bjAzAmdHbJa0qBn5K0l9I2zYFBls"

@@ -142,3 +142,83 @@ async def test_resend_verification_nao_revela_conta_inexistente(client_auth, moc
     )
     assert r.status_code == 202
     assert "reenviado" in r.json()["message"]
+
+
+# ── Redefinição de senha (TCC-092) ────────────────────────────────────────────
+
+
+async def test_forgot_password_202(client_auth, mock_auth_svc):
+    mock_auth_svc.request_password_reset = AsyncMock()
+    r = await client_auth.post("/api/v1/auth/forgot-password", json={"email": "a@test.com"})
+    assert r.status_code == 202
+    mock_auth_svc.request_password_reset.assert_awaited_once_with("a@test.com")
+
+
+async def test_forgot_password_nao_revela_conta_inexistente(client_auth, mock_auth_svc):
+    """Mesma resposta para e-mail que existe e para o que não existe."""
+    mock_auth_svc.request_password_reset = AsyncMock()
+    r = await client_auth.post("/api/v1/auth/forgot-password", json={"email": "ghost@test.com"})
+    assert r.status_code == 202
+    assert "Se houver uma conta" in r.json()["message"]
+
+
+async def test_reset_password_204(client_auth, mock_auth_svc):
+    mock_auth_svc.reset_password = AsyncMock()
+    r = await client_auth.post(
+        "/api/v1/auth/reset-password", json={"token": "x" * 32, "password": "novasenha1"}
+    )
+    assert r.status_code == 204
+
+
+async def test_reset_password_token_invalido_401(client_auth, mock_auth_svc):
+    mock_auth_svc.reset_password = AsyncMock(
+        side_effect=UnauthorizedError("Link de redefinição inválido")
+    )
+    r = await client_auth.post(
+        "/api/v1/auth/reset-password", json={"token": "x" * 32, "password": "novasenha1"}
+    )
+    assert r.status_code == 401
+
+
+async def test_reset_password_rejeita_senha_curta_422(client_auth):
+    r = await client_auth.post(
+        "/api/v1/auth/reset-password", json={"token": "x" * 32, "password": "123"}
+    )
+    assert r.status_code == 422
+
+
+# ── Rate limit (TCC-091) ──────────────────────────────────────────────────────
+
+
+async def test_login_devolve_429_depois_do_limite(client_auth):
+    """10 tentativas em 5 min; a 11ª é barrada com Retry-After."""
+    corpo = {"email": "a@test.com", "password": "seja-o-que-for"}
+    for _ in range(10):
+        await client_auth.post("/api/v1/auth/login", json=corpo)
+
+    r = await client_auth.post("/api/v1/auth/login", json=corpo)
+    assert r.status_code == 429
+    assert int(r.headers["retry-after"]) > 0
+    assert r.json()["retry_after"] > 0
+
+
+async def test_register_tem_limite_proprio(client_auth):
+    """Gastar o limite de login não pode fechar o cadastro."""
+    for _ in range(10):
+        await client_auth.post(
+            "/api/v1/auth/login", json={"email": "a@test.com", "password": "x"}
+        )
+    r = await client_auth.post(
+        "/api/v1/auth/register", json={"email": "novo@test.com", "password": "secret123"}
+    )
+    assert r.status_code == 201
+
+
+async def test_forgot_password_limite_mais_apertado(client_auth, mock_auth_svc):
+    """Rota que dispara e-mail: 3 por hora, senão vira máquina de spam."""
+    mock_auth_svc.request_password_reset = AsyncMock()
+    for _ in range(3):
+        await client_auth.post("/api/v1/auth/forgot-password", json={"email": "a@test.com"})
+
+    r = await client_auth.post("/api/v1/auth/forgot-password", json={"email": "a@test.com"})
+    assert r.status_code == 429

@@ -36,3 +36,18 @@ class QuotaExceededError(Exception):
         self.feature = feature
         self.limit = limit
         self.used = used
+
+
+class RateLimitedError(Exception):
+    """Batidas demais no mesmo IP para a mesma rota (TCC-091).
+
+    Vira 429 com ``Retry-After``. Separado de ``QuotaExceededError``, que também
+    é 429 mas significa outra coisa: aquele é a cota do plano do usuário, este é
+    o freio anônimo contra força bruta.
+    """
+
+    def __init__(self, retry_after: int) -> None:
+        detail = "Muitas tentativas. Espere um pouco e tente de novo."
+        super().__init__(detail)
+        self.detail = detail
+        self.retry_after = retry_after
