@@ -337,11 +337,16 @@ Ordenadas pelo que efetivamente barra alguém:
 
 ### O que ainda não existe
 
-- **Rate limit por IP.** Só `diagnoses` tem alguma limitação. `POST
-  /auth/register` e `POST /auth/login` aceitam requisições sem throttle — um
-  script pode martelar login. As cotas seguram o custo de LLM, mas não o custo
-  de CPU.
-- **Reset de senha.** Não há fluxo de "esqueci minha senha". Conta com e-mail
-  digitado errado é conta perdida.
-- **Teto de gasto na OpenAI.** Configure um *usage limit* no painel da OpenAI.
-  É a única proteção real caso algo escape das cotas.
+- **Teto de gasto na OpenAI.** Não dá para configurar daqui — é no painel da
+  OpenAI, em *Settings → Limits → Usage limits*. É a única proteção real caso
+  algo escape das cotas do plano e do rate limit. **Faça isso antes de deixar
+  a aplicação ligada sem supervisão.**
+- **Revogar as credenciais depois da banca.** A chave da OpenAI, a
+  `service_role` do Supabase e a senha do banco circularam em texto no chat
+  durante a configuração. Nada disso está versionado — mora em `cloudrun.env`
+  e nas variáveis do Cloud Run, ambos fora do git —, mas rotacionar quando o
+  TCC terminar é higiene barata.
+- **Rate limit compartilhado entre instâncias.** O atual é por processo. Com
+  `--max-instances 2`, o limite efetivo pode chegar ao dobro. Suficiente contra
+  força bruta; se um dia o serviço escalar de verdade, troque a implementação
+  de `_Janela` em `app/core/rate_limit.py` — os call sites não mudam.
