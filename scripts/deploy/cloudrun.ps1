@@ -11,6 +11,10 @@
 
     Idempotente: rodar de novo atualiza o serviço no lugar.
 
+    Roda com --quiet: sem isso o gcloud para para confirmar a criação do
+    repositório no Artifact Registry, e a execução trava esperando um "Y" que
+    nunca chega quando o script roda sem terminal interativo.
+
 .PARAMETER ProjectId
     ID do projeto no GCP. Se omitido, usa o projeto ativo do gcloud.
 
@@ -113,7 +117,7 @@ try {
     if (-not $SkipApiEnable) {
         Write-Host "  Habilitando APIs (demora na primeira vez)..." -ForegroundColor Cyan
         & $gcloud services enable run.googleapis.com cloudbuild.googleapis.com `
-            artifactregistry.googleapis.com --project $ProjectId
+            artifactregistry.googleapis.com --project $ProjectId --quiet
         if ($LASTEXITCODE -ne 0) { throw "Falha ao habilitar as APIs." }
     }
 
@@ -137,6 +141,7 @@ try {
         --min-instances 0 `
         --max-instances 2 `
         --timeout 3600 `
+        --quiet `
         --set-env-vars $envArg
 
     if ($LASTEXITCODE -ne 0) { throw "Deploy falhou." }
@@ -160,7 +165,7 @@ try {
         Set-Content -Path $envPath -Value $content -Encoding UTF8
 
         & $gcloud run services update $ServiceName --project $ProjectId --region $Region `
-            --update-env-vars "PUBLIC_API_URL=$url"
+            --quiet --update-env-vars "PUBLIC_API_URL=$url"
         if ($LASTEXITCODE -ne 0) { throw "Falha ao aplicar PUBLIC_API_URL." }
     }
 
