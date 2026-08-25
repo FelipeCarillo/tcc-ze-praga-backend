@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.rate_limit import limpar_rate_limit
 from app.core.security import create_access_token
 from app.domains.action_plans.dto import ActionPlanDTO, ActionPlanLevelDTO, ActionPlanSourceDTO
 from app.domains.auth.dto import UserDTO
@@ -20,6 +21,20 @@ from app.domains.diagnoses.dto import DiagnosisDTO, Top3PredictionDTO
 from app.domains.subscriptions.dto import PlanDTO, SubscriptionDTO
 from app.domains.usage.dto import UsageLogDTO
 from app.shared.enums import FeatureTypeEnum, SeverityEnum
+
+
+@pytest.fixture(autouse=True)
+def _zera_rate_limit():
+    """Isola o rate limiter entre testes (TCC-091).
+
+    O limiter guarda estado global em memória. Sem zerar, um teste que faz
+    várias chamadas em ``/auth/register`` gastaria a cota dos seguintes, e a
+    suíte passaria a falhar por ordem de execução — o tipo de flake que custa
+    horas para diagnosticar.
+    """
+    limpar_rate_limit()
+    yield
+    limpar_rate_limit()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

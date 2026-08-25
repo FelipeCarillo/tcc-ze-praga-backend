@@ -13,6 +13,7 @@ from app.core.exceptions import (
     ForbiddenError,
     NotFoundError,
     QuotaExceededError,
+    RateLimitedError,
     UnauthorizedError,
 )
 from app.domains.action_plans.router import router as action_plans_router
@@ -102,6 +103,16 @@ async def forbidden_handler(request: Request, exc: ForbiddenError) -> JSONRespon
 @app.exception_handler(ConflictError)
 async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": exc.detail})
+
+
+@app.exception_handler(RateLimitedError)
+async def rate_limited_handler(request: Request, exc: RateLimitedError) -> JSONResponse:
+    # Retry-After deixa o cliente saber quando voltar em vez de ficar batendo.
+    return JSONResponse(
+        status_code=429,
+        content={"detail": exc.detail, "retry_after": exc.retry_after},
+        headers={"Retry-After": str(exc.retry_after)},
+    )
 
 
 @app.exception_handler(QuotaExceededError)

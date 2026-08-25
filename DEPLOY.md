@@ -6,6 +6,9 @@ em uso.
 
 ## Estado atual (25/08/2026)
 
+> **O serviço está DESLIGADO.** O acesso público foi removido — a API responde
+> 503. Para ligar: `.\scripts\deploy\zepraga.ps1 -Acao ligar`.
+
 Já provisionado:
 
 | Recurso | Identificador | Situação |
@@ -22,12 +25,14 @@ Validado em produção contra o serviço no ar: cadastro devolvendo 202, login
 barrado antes de confirmar, e CORS liberando o domínio da Vercel. Os seeds
 rodaram no boot do container — 1 cultura, 6 doenças e 18 planos de ação.
 
+Bucket `uploads` criado e confirmado.
+
 Falta:
 
-1. **Bucket de Storage** — criar no painel do Supabase, com o nome `uploads`
-   (é o default do `SupabaseStorageUploader`). Sem ele o envio de imagem falha.
-2. **Mergear** a branch `chore/api-url-producao` no frontend — é ela que aponta
-   o build para a API no Cloud Run.
+1. **Autorizar o Cloud Build no GitHub** — único passo que não sai por API
+   (é OAuth no navegador). Veja a seção 6.
+2. **Mergear** as branches abertas: `chore/api-url-producao` no frontend e
+   `feat/deploy-verificacao-email` no backend.
 3. **Remetente do Resend** — veja o aviso abaixo. É o que bloqueia a
    demonstração hoje.
 
@@ -212,6 +217,52 @@ pode passar de 30 s. Antes de apresentar para a banca, faça uma chamada em
 Se quiser eliminar isso durante a apresentação, `--min-instances 1` mantém uma
 instância viva — mas aí ela é cobrada continuamente e sai do free tier. Ligue
 antes, desligue depois.
+
+---
+
+## 6. Deploy automático a cada push na main
+
+O `cloudbuild.yaml` na raiz descreve o pipeline. Já estão prontos: APIs
+habilitadas, permissões da conta de build concedidas, bucket de modelos criado
+e populado, e a conexão `ze-praga-github` no Cloud Build.
+
+Falta autorizar o Cloud Build no GitHub — OAuth no navegador, sem equivalente
+por linha de comando:
+
+```powershell
+.\scripts\deploy\trigger.ps1
+```
+
+Ele imprime o link de autorização se ainda faltar, e cria o trigger assim que
+a conexão estiver pronta.
+
+### A armadilha que esse pipeline resolve
+
+Os três `.onnx` estão no repositório via **Git LFS**. Um `git clone` traz
+ponteiros de 134 bytes, não os 485 MB de modelo. Uma imagem construída com
+esses ponteiros **sobe saudável**: o `InferenceService` não acha um ONNX válido
+e cai no mock por degradação graciosa. O `/health` responde 200, os testes
+passam, e a API devolve diagnósticos aleatórios sem nenhum sinal de erro.
+
+Por isso o primeiro passo do build copia os modelos do Cloud Storage
+(`gs://ze-praga-tcc-models`) por cima dos ponteiros, e há uma trava: qualquer
+`.onnx` com menos de 1 MB derruba o build. Falhar alto é melhor que servir
+mock calado.
+
+Isso também evita a cota de banda do GitHub LFS (~1 GB/mês), que dois builds
+esgotariam.
+
+Ao treinar um modelo novo, atualize o bucket:
+
+```bash
+gcloud storage cp models/* gs://ze-praga-tcc-models/models/
+```
+
+### O deploy não liga a aplicação
+
+O trigger publica uma revisão nova, mas **não reabre o acesso público**. Se o
+serviço estiver desligado, ele continua respondendo 403 depois do build. Ligar
+segue sendo decisão sua, pelo `zepraga.ps1`.
 
 ---
 
