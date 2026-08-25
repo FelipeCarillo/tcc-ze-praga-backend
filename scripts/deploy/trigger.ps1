@@ -43,7 +43,8 @@ param(
     [string]$Connection = "ze-praga-github",
     [string]$RepoOwner = "FelipeCarillo",
     [string]$RepoName = "tcc-ze-praga-backend",
-    [string]$TriggerName = "ze-praga-api-main"
+    [string]$TriggerName = "ze-praga-api-main",
+    [string]$BuildServiceAccount = "258465616083-compute@developer.gserviceaccount.com"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -119,14 +120,55 @@ if ($triggerExiste) {
 }
 
 Write-Host "  Criando o trigger para a branch '$Branch' ..." -ForegroundColor Cyan
-& $gcloud builds triggers create github $TriggerName `
+# O nome vai em --name, nao posicional: `triggers create github <nome>` da
+# "unrecognized arguments". E o --service-account e exigido nos triggers de
+# 2a geracao (os que apontam pra --repository).
+& $gcloud builds triggers create github `
+    --name=$TriggerName `
     @comum `
     --repository=$repoPath `
     --branch-pattern="^$Branch$" `
     --build-config="cloudbuild.yaml" `
+    --service-account="projects/$ProjectId/serviceAccounts/$BuildServiceAccount" `
     --quiet
 
 if ($LASTEXITCODE -ne 0) { throw "Falha ao criar o trigger." }
+
+# ── 4. Conserta o acento circunflexo comido pelo cmd.exe ──────────────────────
+#
+# No Windows o `gcloud` e um .cmd, e o cmd.exe trata "^" como caractere de
+# escape — o padrao "^main$" chega no servidor como "main$". A diferenca
+# importa: "main$" e regex que casa com qualquer branch TERMINADA em "main",
+# entao uma "dev-main" dispararia deploy de producao.
+#
+# Passar "^^main$" tambem nao resolve (o servidor recusa). A saida e falar com
+# a API REST direto, onde nao ha shell no meio.
+
+$padraoAtual = (& $gcloud builds triggers describe $TriggerName @comum `
+        --format="value(repositoryEventConfig.push.branch)" 2>$null)
+
+$desejado = "^$Branch`$"
+if ($padraoAtual -and $padraoAtual.Trim() -ne $desejado) {
+    Write-Host "  Ajustando o padrao de branch ('$($padraoAtual.Trim())' -> '$desejado')..." -ForegroundColor Cyan
+
+    $token = (& $gcloud auth print-access-token 2>$null).Trim()
+    $uri = "https://cloudbuild.googleapis.com/v1/projects/$ProjectId/locations/$Region/triggers/$TriggerName"
+    $cab = @{ Authorization = "Bearer $token" }
+
+    $trigger = Invoke-RestMethod -Uri $uri -Headers $cab
+    $trigger.repositoryEventConfig.push.branch = $desejado
+    foreach ($campo in 'id', 'createTime', 'resourceName') {
+        $trigger.PSObject.Properties.Remove($campo)
+    }
+
+    $corpo = $trigger | ConvertTo-Json -Depth 20
+    $atualizado = Invoke-RestMethod -Uri $uri -Method Patch -Headers $cab `
+        -ContentType 'application/json' -Body $corpo
+
+    $final = $atualizado.repositoryEventConfig.push.branch
+    if ($final -ne $desejado) { throw "Padrao de branch ficou '$final', esperado '$desejado'." }
+    Write-Host "  Padrao corrigido: $final" -ForegroundColor Green
+}
 
 Write-Host ""
 Write-Host "Pronto. Todo push em '$Branch' agora rebuilda e publica." -ForegroundColor Green
