@@ -29,6 +29,7 @@ from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
+from app.core.exceptions import InferenceUnavailableError
 from app.domains.chat.agent_state import ChatState, resolve_image
 from app.domains.chat.memory import index_diagnosis_in_store
 from app.domains.diagnoses.schemas import CreateDiagnosisRequest
@@ -127,9 +128,34 @@ def build_analyze_image_tool(
         )
 
         image_bytes = base64.b64decode(image.b64) if image.b64 else None
-        result = inference_svc.predict(
-            model_id, image.original_name, image_bytes=image_bytes
-        )
+        try:
+            result = inference_svc.predict(
+                model_id, image.original_name, image_bytes=image_bytes
+            )
+        except InferenceUnavailableError as exc:
+            # UX-001: sem classificação real não há diagnóstico. Devolvemos o erro
+            # como ToolMessage para o agente explicar a falha ao usuário, em vez
+            # de persistir um palpite ou derrubar o turno inteiro.
+            logger.warning("analyze_image sem classificação real: %s", exc.detail)
+            return Command(
+                update={
+                    "messages": [
+                        ToolMessage(
+                            content=json.dumps(
+                                {
+                                    "error": exc.detail,
+                                    "note": (
+                                        "A análise não foi executada. Não sugira "
+                                        "nenhuma doença: peça uma nova foto."
+                                    ),
+                                },
+                                ensure_ascii=False,
+                            ),
+                            tool_call_id=tool_call_id,
+                        )
+                    ]
+                }
+            )
         storage_key = await _store_image(user_id, image, image_bytes)
 
         body = CreateDiagnosisRequest(

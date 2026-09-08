@@ -51,3 +51,23 @@ class RateLimitedError(Exception):
         super().__init__(detail)
         self.detail = detail
         self.retry_after = retry_after
+
+
+class InferenceUnavailableError(Exception):
+    """A classificação real não pôde ser executada (UX-001).
+
+    Vira 503. Existe porque o comportamento anterior era pior que um erro: com
+    o ONNX carregado, qualquer falha de decodificação ou de sessão caía no mock,
+    que devolve uma doença **aleatória** com 70–95% de confiança. Na prática o
+    sistema afirmava um diagnóstico inventado com a mesma cara de um real — o
+    risco mais grave para uma demonstração ou para quem decide manejo no campo.
+
+    Com ONNX disponível, o service agora ou classifica de verdade ou levanta
+    isto. O mock segue existindo apenas quando nenhum modelo foi carregado
+    (flag desligada ou arquivos ausentes), e nesse caso o resultado vem
+    marcado com ``simulated=True``.
+    """
+
+    def __init__(self, detail: str = "Não foi possível analisar a imagem.") -> None:
+        super().__init__(detail)
+        self.detail = detail

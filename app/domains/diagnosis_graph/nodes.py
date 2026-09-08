@@ -18,6 +18,7 @@ import binascii
 import logging
 from typing import TYPE_CHECKING, Any
 
+from app.core.exceptions import InferenceUnavailableError
 from app.domains.chat.memory import index_diagnosis_in_store
 from app.domains.diagnoses.schemas import (
     CreateDiagnosisRequest,
@@ -88,30 +89,53 @@ async def run_inference_node(
     batch inteiro roda em ``asyncio.to_thread`` pra nao travar o event loop.
 
     ``image_batch`` traz os bytes em base64 com index alinhado a ``image_ids``.
-    Quando faltar (batch vazio, chamada legada), o service cai no mock.
+    Uma imagem que o ONNX nao consegue classificar (UX-001) sai do lote com o
+    erro registrado em ``errors`` em vez de virar um palpite do mock; as listas
+    alinhadas por index sao reemitidas ja filtradas para os nodes seguintes.
     """
     image_ids = state.get("image_ids", [])
+    raw_batch = state.get("image_batch") or []
     image_bytes_list = _decode_image_batch(state.get("image_batch"))
     model_id = state.get("model_id", "ensemble")
     crop_id = state.get("crop_id")
 
     def _run_batch() -> list[Any]:
-        return [
-            inference_svc.predict(
-                model_id=model_id,
-                image_name=image_id,
-                crop_id=crop_id,
-                image_bytes=(
-                    image_bytes_list[i] if i < len(image_bytes_list) else None
-                ),
-            )
-            for i, image_id in enumerate(image_ids)
-        ]
+        out: list[Any] = []
+        for i, image_id in enumerate(image_ids):
+            try:
+                out.append(
+                    inference_svc.predict(
+                        model_id=model_id,
+                        image_name=image_id,
+                        crop_id=crop_id,
+                        image_bytes=(
+                            image_bytes_list[i] if i < len(image_bytes_list) else None
+                        ),
+                    )
+                )
+            except InferenceUnavailableError as exc:
+                # Uma foto ruim nao pode derrubar o lote inteiro nem virar um
+                # diagnostico inventado: guarda o erro e segue com as outras.
+                out.append(exc)
+        return out
 
     results = await asyncio.to_thread(_run_batch)
 
     predictions: list[dict[str, Any]] = []
-    for result in results:
+    kept_ids: list[str] = []
+    kept_batch: list[str] = []
+    errors: list[dict[str, Any]] = list(state.get("errors") or [])
+    for i, result in enumerate(results):
+        image_id = image_ids[i] if i < len(image_ids) else ""
+        if isinstance(result, InferenceUnavailableError):
+            logger.warning(
+                "Imagem %s ficou sem classificacao real: %s", image_id, result.detail
+            )
+            errors.append({"image_name": image_id, "error": result.detail})
+            continue
+        kept_ids.append(image_id)
+        if i < len(raw_batch):
+            kept_batch.append(raw_batch[i])
         predictions.append(
             {
                 "disease_id": result.disease_id,
@@ -133,7 +157,14 @@ async def run_inference_node(
                 ],
             }
         )
-    return {"predictions": predictions}
+    # Reemite as listas alinhadas ja sem as imagens que falharam, para que
+    # gather_evidence e persist continuem casando index a index.
+    return {
+        "predictions": predictions,
+        "image_ids": kept_ids,
+        "image_batch": kept_batch,
+        "errors": errors,
+    }
 
 
 async def compose_action_plan_node(

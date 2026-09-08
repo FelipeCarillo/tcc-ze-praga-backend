@@ -3,8 +3,10 @@
 A partir do TCC-023 (ADR-0003) o service usa um **modelo ONNX real**
 (EfficientNet-B4 treinado no ASDID) quando um ``OnnxClassifier`` é injetado e os
 bytes da imagem estão disponíveis. Caso contrário — sem classifier, sem bytes, ou
-erro de inferência — cai no **mock** (comportamento anterior), garantindo que o
-fluxo nunca quebra (graceful degradation).
+sem bytes — o comportamento depende de haver ONNX carregado. Com modelo
+carregado, falha vira ``InferenceUnavailableError`` (UX-001): inventar um
+diagnóstico é pior que admitir a falha. Sem nenhum modelo, cai no **mock**,
+sempre marcado com ``simulated=True``.
 
 O catálogo de doenças mora no banco (tabela ``diseases``) e é injetado como
 snapshot (``diseases: list[DiseaseDTO]``) pelo factory ``get_inference_service``.
@@ -18,6 +20,7 @@ import logging
 import random
 from typing import TYPE_CHECKING, ClassVar
 
+from app.core.exceptions import InferenceUnavailableError
 from app.domains.diagnoses.schemas import Top3PredictionSchema
 from app.domains.inference.repository import DiseaseDTO
 from app.domains.inference.schemas import InferenceResult
@@ -168,31 +171,54 @@ class InferenceService:
 
         Resolve o modelo pedido (``model_id``) para a chave canônica e roda o
         ONNX correspondente; ``ensemble`` faz a média das probabilidades de todos
-        os modelos do registro. Sem classifier, sem bytes, ou em erro → mock.
+        os modelos do registro. Com ONNX carregado, ausência de bytes ou falha de
+        inferência levantam ``InferenceUnavailableError`` em vez de mockar
+        (UX-001). Sem nenhum classifier, cai no mock com ``simulated=True``.
         ``crop_id`` reservado pra sprint A2 (catálogo por crop em runtime).
         """
-        if image_bytes:
-            canonical = normalize_model_id(model_id)
-            try:
-                if canonical == ENSEMBLE:
-                    members = list(self._classifiers.values()) or (
-                        [self._classifier] if self._classifier is not None else []
-                    )
-                    if members:
-                        return self._predict_ensemble(
-                            members, model_id, image_name, image_bytes
-                        )
-                else:
-                    clf = self._classifiers.get(canonical) or self._classifier
-                    if clf is not None:
-                        return self._predict_onnx(
-                            clf, model_id, image_name, image_bytes
-                        )
-            except Exception:  # noqa: BLE001 — nunca derruba o fluxo; cai no mock
-                logger.exception(
-                    "Inferência ONNX falhou para %s — usando mock", image_name
+        canonical = normalize_model_id(model_id)
+        members = self._resolve_members(canonical)
+
+        # Sem nenhum ONNX carregado (flag desligada ou arquivos ausentes) o mock
+        # segue valendo — é o modo de desenvolvimento sem os ~500 MB de modelo.
+        # O resultado sai marcado como simulado para ninguém confundir com real.
+        if not members:
+            return self._predict_mock(model_id, image_name)
+
+        # Com ONNX disponível, não existe "meio termo": ou classifica de verdade
+        # ou falha. O fallback silencioso daqui inventava uma doença aleatória
+        # com 70–95% de confiança, indistinguível de um diagnóstico real (UX-001).
+        if not image_bytes:
+            raise InferenceUnavailableError(
+                "A imagem não chegou ao classificador. Reenvie a foto."
+            )
+
+        try:
+            if canonical == ENSEMBLE:
+                return self._predict_ensemble(
+                    members, model_id, image_name, image_bytes
                 )
-        return self._predict_mock(model_id, image_name)
+            return self._predict_onnx(members[0], model_id, image_name, image_bytes)
+        except Exception as exc:
+            logger.exception("Inferência ONNX falhou para %s", image_name)
+            raise InferenceUnavailableError(
+                "Não foi possível analisar esta imagem. Confira se o arquivo "
+                "é uma foto válida (JPEG ou PNG) e tente de novo."
+            ) from exc
+
+    def _resolve_members(self, canonical: str) -> list[OnnxClassifier]:
+        """Classificadores que atendem ``canonical``; vazio se nada carregado.
+
+        ``ensemble`` usa todo o registro; um id específico usa o seu classifier,
+        caindo no default quando aquele modelo não foi carregado.
+        """
+        if canonical == ENSEMBLE:
+            members = list(self._classifiers.values())
+            if not members and self._classifier is not None:
+                members = [self._classifier]
+            return members
+        clf = self._classifiers.get(canonical) or self._classifier
+        return [clf] if clf is not None else []
 
     # ── ONNX real ────────────────────────────────────────────────────────────
 
@@ -276,7 +302,11 @@ class InferenceService:
     # ── Mock (fallback) ──────────────────────────────────────────────────────
 
     def _predict_mock(self, model_id: str, image_name: str) -> InferenceResult:
-        """Predição mockada a partir do catálogo injetado (comportamento legado)."""
+        """Predição mockada a partir do catálogo injetado (comportamento legado).
+
+        Só roda quando nenhum ONNX foi carregado. O resultado sai com
+        ``simulated=True`` para que nada apresente isto como classificação real.
+        """
         primary_idx = random.randint(0, len(self._diseases) - 1)
         primary = self._diseases[primary_idx]
 
@@ -330,6 +360,7 @@ class InferenceService:
             model_id=model_id,
             image_name=image_name,
             top3=top3,
+            simulated=True,
         )
 
     def get_model_label(self, model_id: str) -> str:
