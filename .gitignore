@@ -212,3 +212,10 @@ scripts/deploy/deploy.local.json
 
 # Variaveis de producao do Cloud Run (scripts/deploy/cloudrun.ps1)
 scripts/deploy/cloudrun.env
+
+# Imagens do storage local (scripts/serve_demo.py) — nunca versionar
+.local-storage/
+# Backups de env feitos à mão: podem carregar credenciais
+.env.bak-*
+*.env.bak
+.env*.bak
