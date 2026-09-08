@@ -219,3 +219,5 @@ scripts/deploy/cloudrun.env
 .env.bak-*
 *.env.bak
 .env*.bak
+# Config da execução local (carrega chaves reais de OpenAI e Resend)
+.env.local
