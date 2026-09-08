@@ -76,7 +76,13 @@ def main() -> None:
     else:
         env = dict(PADRAO_SEM_ENV_LOCAL)
         origem = "padrões embutidos (copie .env.local.example para .env.local)"
-    os.environ.update(env)
+
+    # `setdefault`, não `update`: o que já estiver no ambiente vence o arquivo.
+    # É o que permite ao `iniciar.ps1 -Rede` sobrescrever HOST, PUBLIC_API_URL e
+    # ALLOWED_ORIGINS com o IP da máquina sem editar o .env.local — e é também a
+    # precedência convencional (variável explícita ganha de arquivo).
+    for chave, valor in env.items():
+        os.environ.setdefault(chave, valor)
 
     # Importado só depois do update: Settings é instanciado no import de app.config.
     import uvicorn
