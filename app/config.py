@@ -104,9 +104,30 @@ class Settings(BaseSettings):
     # Inferência ONNX (TCC-023 / ADR-0003) — modelo real treinado no ASDID.
     # Default ON; se o arquivo ou o onnxruntime faltarem, cai no mock
     # automaticamente (graceful fallback no factory get_inference_service).
+    # Rate limit por IP nas rotas de auth (TCC-091). Os padrões são os valores
+    # de produção; ficam configuráveis porque numa demonstração local todo
+    # acesso vem de 127.0.0.1 e cai no mesmo balde — 5 cadastros/hora bloqueiam
+    # o apresentador por ~1h no pior momento possível.
+    rate_limit_login: str = "10/300"
+    rate_limit_register: str = "5/3600"
+    rate_limit_email: str = "3/3600"
+    rate_limit_reset: str = "10/3600"
+
+    # Backend de storage de imagem. "supabase" (padrão) ou "local".
+    # O modo "local" grava em disco e serve pela própria API — usado para rodar
+    # o fluxo real na máquina do apresentador, sem depender do Supabase.
+    storage_backend: str = "supabase"
+    local_storage_dir: str = ".local-storage"
+
     inference_use_onnx: bool = True
     inference_onnx_model_path: str = "models/soja_efficientnet_b4.onnx"
     inference_onnx_input_size: int = 380
+
+    @staticmethod
+    def parse_rate_limit(valor: str) -> tuple[int, int]:
+        """``"5/3600"`` -> ``(5, 3600)`` — vezes por janela em segundos."""
+        vezes, _, segundos = valor.partition("/")
+        return int(vezes), int(segundos)
 
     @property
     def allowed_origins_list(self) -> list[str]:
