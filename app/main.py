@@ -11,6 +11,7 @@ from app.config import settings
 from app.core.exceptions import (
     ConflictError,
     ForbiddenError,
+    InferenceUnavailableError,
     NotFoundError,
     QuotaExceededError,
     RateLimitedError,
@@ -103,6 +104,18 @@ async def forbidden_handler(request: Request, exc: ForbiddenError) -> JSONRespon
 @app.exception_handler(ConflictError)
 async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": exc.detail})
+
+
+@app.exception_handler(InferenceUnavailableError)
+async def inference_unavailable_handler(
+    request: Request, exc: InferenceUnavailableError
+) -> JSONResponse:
+    """503 quando a classificação real falhou (UX-001).
+
+    Deliberadamente não devolve um diagnóstico de consolo: o cliente precisa
+    conseguir distinguir "não analisei" de "analisei e deu isto".
+    """
+    return JSONResponse(status_code=503, content={"detail": exc.detail})
 
 
 @app.exception_handler(RateLimitedError)

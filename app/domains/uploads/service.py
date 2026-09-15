@@ -8,9 +8,13 @@ sha256, dedup por hash, upload Supabase, persistir row.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
+import time
 import uuid
+from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote
 
 from app.domains.uploads.repository import UploadedFileRepository
 from app.models.uploaded_file import UploadedFile
@@ -82,6 +86,78 @@ class SupabaseStorageUploader:
             url = row.get("signedURL") or row.get("signedUrl")
             if key and url:
                 out[str(key)] = str(url)
+        return out
+
+
+class LocalStorageUploader:
+    """Storage em disco — permite rodar o fluxo real sem Supabase.
+
+    Existe para a demonstração local do TCC: mesmo contrato do
+    ``SupabaseStorageUploader``, mas os bytes vão para uma pasta e as URLs são
+    servidas pela própria API.
+
+    A URL precisa ser assinada pelo mesmo motivo que no Supabase: a imagem do
+    diagnóstico é renderizada num ``<img src>``, que não manda o header
+    ``Authorization``. Aqui a assinatura é um HMAC-SHA256 sobre
+    ``<key>:<expiração>``, o que evita expor a pasta inteira e mantém a
+    validade temporária do original.
+    """
+
+    def __init__(
+        self,
+        base_dir: str | Path,
+        secret: str,
+        public_base_url: str,
+        bucket: str = "uploads",
+    ) -> None:
+        self._base = Path(base_dir).resolve()
+        self._secret = secret.encode()
+        self._public = public_base_url.rstrip("/")
+        self._bucket = bucket
+
+    @property
+    def bucket(self) -> str:
+        return self._bucket
+
+    def _resolve(self, bucket: str, path: str) -> Path:
+        """Resolve ``bucket/path`` sob a base, barrando path traversal."""
+        target = (self._base / bucket / path).resolve()
+        if not target.is_relative_to(self._base):
+            raise ValueError(f"path fora do diretório de storage: {path!r}")
+        return target
+
+    def _sign(self, key: str, expires_at: int) -> str:
+        msg = f"{key}:{expires_at}".encode()
+        return hmac.new(self._secret, msg, hashlib.sha256).hexdigest()
+
+    def verify(self, key: str, expires_at: int, signature: str) -> bool:
+        """True se a assinatura confere e ainda não expirou."""
+        if expires_at < int(time.time()):
+            return False
+        return hmac.compare_digest(self._sign(key, expires_at), signature)
+
+    def read(self, bucket: str, path: str) -> bytes:
+        return self._resolve(bucket, path).read_bytes()
+
+    def upload(self, *, bucket: str, path: str, data: bytes, content_type: str) -> str:
+        target = self._resolve(bucket, path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return path
+
+    def signed_urls(
+        self, *, bucket: str, paths: list[str], expires_in: int
+    ) -> dict[str, str]:
+        expires_at = int(time.time()) + expires_in
+        out: dict[str, str] = {}
+        for key in paths:
+            if not key:
+                continue
+            sig = self._sign(key, expires_at)
+            out[key] = (
+                f"{self._public}/api/v1/uploads/local/{quote(key)}"
+                f"?exp={expires_at}&sig={sig}"
+            )
         return out
 
 

@@ -16,3 +16,5 @@ class InferenceResult(BaseModel):
     model_id: str
     image_name: str
     top3: list[Top3PredictionSchema]
+    simulated: bool = False
+    """True quando o resultado veio do mock, não de um ONNX real (UX-001)."""

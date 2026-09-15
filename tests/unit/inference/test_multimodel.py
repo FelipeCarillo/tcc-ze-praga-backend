@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.exceptions import InferenceUnavailableError
 from app.domains.inference.service import (
     EFFICIENTNET_B4,
     ENSEMBLE,
@@ -109,8 +110,48 @@ def test_unknown_model_falls_back_to_ensemble_behavior():
     assert r.disease_id == "saudavel"
 
 
-def test_no_image_bytes_uses_mock_even_with_classifiers():
+def test_no_image_bytes_com_classifier_falha_em_vez_de_mockar():
+    """UX-001: com ONNX carregado, imagem ausente é erro, não palpite.
+
+    O comportamento anterior devolvia o mock — uma doença aleatória com 70–95%
+    de confiança e a mesma forma de um resultado real. Para quem decide manejo
+    a partir da tela, isso é pior que uma falha explícita.
+    """
     clfs = {EFFICIENTNET_B4: FakeClassifier({"saudavel": 1.0})}
     svc = InferenceService(diseases=SIX_SOJA_DISEASES, classifiers=clfs)
-    r = svc.predict("efficientnet", "x.jpg")  # sem image_bytes → mock
-    assert r.model_id == "efficientnet"
+    with pytest.raises(InferenceUnavailableError):
+        svc.predict("efficientnet", "x.jpg")
+
+
+def test_erro_do_onnx_vira_falha_explicita():
+    """Um classifier que estoura não pode virar diagnóstico inventado."""
+
+    class BrokenClassifier:
+        def predict(self, image_bytes, top_k=3):
+            raise ValueError("imagem corrompida")
+
+        def predict_probs(self, image_bytes):
+            raise ValueError("imagem corrompida")
+
+    svc = InferenceService(
+        diseases=SIX_SOJA_DISEASES, classifiers={EFFICIENTNET_B4: BrokenClassifier()}
+    )
+    with pytest.raises(InferenceUnavailableError):
+        svc.predict("efficientnet", "x.jpg", image_bytes=b"lixo")
+    with pytest.raises(InferenceUnavailableError):
+        svc.predict("ensemble", "x.jpg", image_bytes=b"lixo")
+
+
+def test_sem_nenhum_classifier_mock_continua_mas_marcado():
+    """Sem ONNX carregado o mock segue (dev sem os ~500 MB), porém declarado."""
+    svc = InferenceService(diseases=SIX_SOJA_DISEASES)
+    r = svc.predict("efficientnet", "x.jpg", image_bytes=b"img")
+    assert r.simulated is True
+
+
+def test_resultado_onnx_nao_e_marcado_como_simulado():
+    clfs = {EFFICIENTNET_B4: FakeClassifier({"saudavel": 1.0})}
+    svc = InferenceService(diseases=SIX_SOJA_DISEASES, classifiers=clfs)
+    r = svc.predict("efficientnet", "x.jpg", image_bytes=b"img")
+    assert r.simulated is False
+    assert r.disease_id == "saudavel"

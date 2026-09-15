@@ -21,6 +21,7 @@ from app.shared.enums import FeatureTypeEnum
 
 if TYPE_CHECKING:
     from app.domains.inference.onnx_classifier import OnnxClassifier
+    from app.domains.uploads.service import LocalStorageUploader
     from app.domains.usage.service import UsageService
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -118,14 +119,49 @@ async def get_checkpointer_dep():  # type: ignore[no-untyped-def]
 # ── Services ──────────────────────────────────────────────────────────────────
 
 
+_local_uploader = None
+
+
+def get_local_storage_uploader() -> "LocalStorageUploader":
+    """``LocalStorageUploader`` único por processo (mantém o segredo estável).
+
+    O segredo das URLs assinadas é o próprio ``jwt_secret_key``: reiniciar a API
+    com uma chave efêmera invalida as URLs antigas, que é o mesmo efeito de uma
+    URL assinada expirada — aceitável para uso local.
+    """
+    global _local_uploader
+    if _local_uploader is None:
+        from app.config import settings
+        from app.domains.uploads.service import LocalStorageUploader
+
+        _local_uploader = LocalStorageUploader(
+            base_dir=settings.local_storage_dir,
+            secret=settings.jwt_secret_key,
+            public_base_url=settings.public_api_url,
+        )
+    return _local_uploader
+
+
 def get_upload_service(  # type: ignore[no-untyped-def]
     repo=Depends(get_uploaded_file_repository),
 ):
-    """UploadService com SupabaseStorageUploader (lru_cache no client)."""
-    from app.db.storage import get_storage_client
-    from app.domains.uploads.service import SupabaseStorageUploader, UploadService
+    """UploadService com o uploader do backend configurado.
 
-    uploader = SupabaseStorageUploader(get_storage_client())
+    ``storage_backend=local`` troca o Supabase por disco (demonstração local).
+    """
+    from app.config import settings
+    from app.db.storage import get_storage_client
+    from app.domains.uploads.service import (
+        StorageUploader,
+        SupabaseStorageUploader,
+        UploadService,
+    )
+
+    uploader: StorageUploader
+    if settings.storage_backend == "local":
+        uploader = get_local_storage_uploader()
+    else:
+        uploader = SupabaseStorageUploader(get_storage_client())
     return UploadService(repo, uploader)
 
 

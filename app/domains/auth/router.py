@@ -22,10 +22,12 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 # Limites por IP (TCC-091). Rotas que disparam e-mail são as mais apertadas —
 # além do custo, servem de amplificador: sem freio, um script transforma o
 # endpoint numa máquina de mandar mensagem para caixa de entrada alheia.
-_LIMITE_LOGIN = RateLimit(10, 300, nome="auth:login")
-_LIMITE_CADASTRO = RateLimit(5, 3600, nome="auth:register")
-_LIMITE_EMAIL = RateLimit(3, 3600, nome="auth:email")
-_LIMITE_RESET = RateLimit(10, 3600, nome="auth:reset")
+_LIMITE_LOGIN = RateLimit(*settings.parse_rate_limit(settings.rate_limit_login), nome="auth:login")
+_LIMITE_CADASTRO = RateLimit(
+    *settings.parse_rate_limit(settings.rate_limit_register), nome="auth:register"
+)
+_LIMITE_EMAIL = RateLimit(*settings.parse_rate_limit(settings.rate_limit_email), nome="auth:email")
+_LIMITE_RESET = RateLimit(*settings.parse_rate_limit(settings.rate_limit_reset), nome="auth:reset")
 
 
 @router.post(
