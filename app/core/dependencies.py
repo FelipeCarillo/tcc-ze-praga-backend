@@ -272,8 +272,8 @@ _onnx_loaded = False
 def _get_onnx_classifiers() -> "dict[str, OnnxClassifier]":
     """Retorna ``{chave_canônica: OnnxClassifier}`` para os modelos disponíveis.
 
-    Graceful: flag off → vazio; cada modelo ausente ou que falhe ao carregar é
-    apenas pulado (o InferenceService cai no mock/default p/ aquele id).
+    A flag desligada devolve o registro vazio para testes. No modo ONNX real, o
+    factory exige o conjunto completo antes de aceitar requisições.
     """
     global _onnx_classifiers, _onnx_loaded
     if _onnx_loaded:
@@ -320,9 +320,10 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
 
     Usa cache do DiseaseRepository — chamada repetida nao bate no DB.
     O catalogo e' carregado pra crop ``soja`` por padrao (multi-cultivo
-    completo vem em sprint A2). Injeta o OnnxClassifier real (TCC-023) quando
-    disponível; senão o service usa o mock.
+    completo vem em sprint A2). Em modo real, exige todos os ONNX configurados
+    para não trocar silenciosamente de modelo nem cair em mock.
     """
+    from app.config import settings
     from app.domains.inference.service import InferenceService
 
     crop = await crop_repo.get_by_slug("soja")
@@ -331,7 +332,14 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
             "Crop 'soja' nao encontrada no DB — rode `uv run python -m scripts.seed_crops`."
         )
     diseases = await disease_repo.list_by_crop(crop.id)
-    return InferenceService(diseases=diseases, classifiers=_get_onnx_classifiers())
+    classifiers = _get_onnx_classifiers()
+    missing_models = set(_ONNX_MODELS) - set(classifiers)
+    if settings.inference_use_onnx and missing_models:
+        raise RuntimeError(
+            "INFERENCE_USE_ONNX=true, mas os modelos ONNX exigidos nao carregaram: "
+            f"{', '.join(sorted(missing_models))}. O modo real nao permite fallback."
+        )
+    return InferenceService(diseases=diseases, classifiers=classifiers)
 
 
 async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
@@ -343,6 +351,7 @@ async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
 
     Usado pelo factory do sub-grafo (TCC-042) — multi-cultivo runtime.
     """
+    from app.config import settings
     from app.domains.inference.service import InferenceService
 
     crop = await crop_repo.get_by_slug(crop_id_or_slug)
@@ -353,7 +362,14 @@ async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
             f"Crop '{crop_id_or_slug}' nao encontrada — verifique seed_crops."
         )
     diseases = await disease_repo.list_by_crop(crop.id)
-    return InferenceService(diseases=diseases, classifiers=_get_onnx_classifiers())
+    classifiers = _get_onnx_classifiers()
+    missing_models = set(_ONNX_MODELS) - set(classifiers)
+    if settings.inference_use_onnx and missing_models:
+        raise RuntimeError(
+            "INFERENCE_USE_ONNX=true, mas os modelos ONNX exigidos nao carregaram: "
+            f"{', '.join(sorted(missing_models))}. O modo real nao permite fallback."
+        )
+    return InferenceService(diseases=diseases, classifiers=classifiers)
 
 
 def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.core.exceptions import (
     ConflictError,
+    EmailDeliveryError,
     ForbiddenError,
     InferenceUnavailableError,
     NotFoundError,
@@ -104,6 +105,11 @@ async def forbidden_handler(request: Request, exc: ForbiddenError) -> JSONRespon
 @app.exception_handler(ConflictError)
 async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": exc.detail})
+
+
+@app.exception_handler(EmailDeliveryError)
+async def email_delivery_handler(request: Request, exc: EmailDeliveryError) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": exc.detail})
 
 
 @app.exception_handler(InferenceUnavailableError)

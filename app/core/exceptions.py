@@ -71,3 +71,16 @@ class InferenceUnavailableError(Exception):
     def __init__(self, detail: str = "Não foi possível analisar a imagem.") -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class EmailDeliveryError(Exception):
+    """O provedor transacional não aceitou ou não alcançou o envio.
+
+    A rota transforma esta exceção em 503 para que o frontend não confirme um
+    e-mail que nunca foi entregue. O detalhe é deliberadamente genérico: não
+    expõe credenciais, respostas do provedor ou informações do destinatário.
+    """
+
+    def __init__(self, detail: str = "O serviço de e-mail está indisponível.") -> None:
+        super().__init__(detail)
+        self.detail = detail

@@ -118,7 +118,7 @@ async def seed_crops(db: AsyncSession) -> dict[str, str]:
         result = await db.execute(select(Crop).where(Crop.slug == crop_data["slug"]))
         existing = result.scalar_one_or_none()
         if existing:
-            print(f"  ✓ Crop '{crop_data['slug']}' already exists, skipping.")
+            print(f"  [ok] Crop '{crop_data['slug']}' already exists, skipping.")
             slug_to_id[crop_data["slug"]] = existing.id
             continue
 
@@ -149,7 +149,10 @@ async def seed_diseases(db: AsyncSession, slug_to_crop_id: dict[str, str]) -> No
             )
             existing = result.scalar_one_or_none()
             if existing:
-                print(f"  ✓ Disease '{crop_slug}/{disease_data['slug']}' already exists, skipping.")
+                print(
+                    f"  [ok] Disease '{crop_slug}/{disease_data['slug']}' already exists, "
+                    "skipping."
+                )
                 continue
 
             db.add(Disease(crop_id=crop_id, **disease_data))

@@ -102,8 +102,7 @@ class Settings(BaseSettings):
     agent_enable_ask_user: bool = True
 
     # Inferência ONNX (TCC-023 / ADR-0003) — modelo real treinado no ASDID.
-    # Default ON; se o arquivo ou o onnxruntime faltarem, cai no mock
-    # automaticamente (graceful fallback no factory get_inference_service).
+    # O launcher de modo real exige todos os modelos carregarem; não há mock.
     # Rate limit por IP nas rotas de auth (TCC-091). Os padrões são os valores
     # de produção; ficam configuráveis porque numa demonstração local todo
     # acesso vem de 127.0.0.1 e cai no mesmo balde — 5 cadastros/hora bloqueiam

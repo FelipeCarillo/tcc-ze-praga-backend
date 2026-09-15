@@ -13,6 +13,10 @@ silenciosa justamente onde ela custa mais caro — no meio de uma demonstração
 
 Diferente de ``scripts.local_dev``, este helper **não** substitui variáveis:
 usa o ``.env`` do repositório como está (Supabase, OpenAI, Storage reais).
+Se a chave opcional do Resend estiver guardada em ``.env.local``, ela é
+injetada isoladamente no processo da API. Nenhuma outra configuração desse
+arquivo é aproveitada, evitando misturar configurações de demonstração com o
+ambiente real.
 """
 
 from __future__ import annotations
@@ -21,6 +25,9 @@ import asyncio
 import os
 import selectors
 import sys
+from pathlib import Path
+
+from dotenv import dotenv_values
 
 
 def selector_loop() -> asyncio.AbstractEventLoop:
@@ -28,7 +35,30 @@ def selector_loop() -> asyncio.AbstractEventLoop:
     return asyncio.SelectorEventLoop(selectors.SelectSelector())
 
 
+def load_optional_local_resend_key() -> bool:
+    """Disponibiliza somente a chave local do Resend, sem sobrescrever `.env`.
+
+    A chave do ambiente é sempre prioritária. O fallback existe porque o
+    ``.env.local`` é ignorado pelo Git e é o local adequado para um segredo
+    opcional que não deve ser copiado para a configuração compartilhada.
+    """
+    if os.environ.get("RESEND_API_KEY"):
+        return True
+
+    local_env = Path(__file__).resolve().parents[1] / ".env.local"
+    if not local_env.is_file():
+        return False
+
+    resend_api_key = dotenv_values(local_env).get("RESEND_API_KEY")
+    if not resend_api_key:
+        return False
+
+    os.environ["RESEND_API_KEY"] = resend_api_key
+    return True
+
+
 def main() -> None:
+    load_optional_local_resend_key()
     import uvicorn
 
     host = os.environ.get("HOST", "127.0.0.1")

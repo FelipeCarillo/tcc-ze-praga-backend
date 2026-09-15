@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.email import NullEmailSender, ResendEmailSender, get_email_sender
+from app.core.exceptions import EmailDeliveryError
 from app.core.exceptions import UnauthorizedError
 from app.domains.auth.dto import EmailVerificationTokenDTO
 from app.domains.auth.schemas import LoginRequest, RegisterRequest
@@ -234,8 +235,9 @@ async def test_login_inativo_sem_gate_mantem_mensagem_antiga(user_repo, verifica
 
 
 async def test_null_sender_nao_chama_rede():
-    """Nao deve levantar nem tocar httpx — so registra no log."""
-    await NullEmailSender().send(to="a@b.com", subject="x", html="<p>y</p>")
+    """Sem chave, o frontend precisa saber que nenhum e-mail saiu."""
+    with pytest.raises(EmailDeliveryError):
+        await NullEmailSender().send(to="a@b.com", subject="x", html="<p>y</p>")
 
 
 def test_factory_cai_no_null_sem_api_key():
@@ -270,8 +272,8 @@ async def test_resend_sender_monta_payload_da_api():
     assert headers["Authorization"] == "Bearer re_fake"
 
 
-async def test_resend_sender_engole_erro_da_api():
-    """Falha de e-mail nao pode derrubar o cadastro que ja foi gravado."""
+async def test_resend_sender_propaga_erro_da_api():
+    """A rota deve informar falha, sem confirmar um e-mail inexistente."""
     response = type("R", (), {"status_code": 422, "text": "domain not verified"})()
     client = AsyncMock()
     client.post = AsyncMock(return_value=response)
@@ -279,6 +281,7 @@ async def test_resend_sender_engole_erro_da_api():
     client.__aexit__ = AsyncMock(return_value=False)
 
     with patch("app.core.email.httpx.AsyncClient", return_value=client):
-        await ResendEmailSender("re_fake", "Ze <no-reply@test.com>").send(
-            to="destino@test.com", subject="Assunto", html="<p>oi</p>"
-        )
+        with pytest.raises(EmailDeliveryError):
+            await ResendEmailSender("re_fake", "Ze <no-reply@test.com>").send(
+                to="destino@test.com", subject="Assunto", html="<p>oi</p>"
+            )

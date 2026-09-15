@@ -280,7 +280,7 @@ async def seed_subscription_plans(db: AsyncSession) -> None:
         )
         existing = result.scalar_one_or_none()
         if existing:
-            print(f"  ✓ Plan '{plan_data['name']}' already exists, skipping.")
+            print(f"  [ok] Plan '{plan_data['name']}' already exists, skipping.")
             continue
 
         plan = SubscriptionPlan(**plan_data)
@@ -315,7 +315,9 @@ async def seed_action_plans(db: AsyncSession) -> None:
             )
             existing = result.scalar_one_or_none()
             if existing:
-                print(f"  ✓ ActionPlan '{disease_id}/{level_name}' already exists, skipping.")
+                print(
+                    f"  [ok] ActionPlan '{disease_id}/{level_name}' already exists, skipping."
+                )
                 continue
 
             db.add(

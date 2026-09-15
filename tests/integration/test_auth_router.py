@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from app.core.dependencies import get_auth_service, get_current_user
-from app.core.exceptions import ConflictError, UnauthorizedError
+from app.core.exceptions import ConflictError, EmailDeliveryError, UnauthorizedError
 from app.main import app
 from tests.conftest import make_user_dto
 from tests.integration.conftest import make_token_response, make_user_response
@@ -160,6 +160,14 @@ async def test_forgot_password_nao_revela_conta_inexistente(client_auth, mock_au
     r = await client_auth.post("/api/v1/auth/forgot-password", json={"email": "ghost@test.com"})
     assert r.status_code == 202
     assert "Se houver uma conta" in r.json()["message"]
+
+
+async def test_forgot_password_informa_indisponibilidade_do_email(client_auth, mock_auth_svc):
+    """Não confirmar envio quando o provedor recusou a mensagem."""
+    mock_auth_svc.request_password_reset = AsyncMock(side_effect=EmailDeliveryError())
+    r = await client_auth.post("/api/v1/auth/forgot-password", json={"email": "a@test.com"})
+    assert r.status_code == 503
+    assert r.json()["detail"] == "O serviço de e-mail está indisponível."
 
 
 async def test_reset_password_204(client_auth, mock_auth_svc):
