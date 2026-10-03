@@ -470,3 +470,54 @@ async def test_list_interrupts_empty(client_chat, mock_chat_svc):
 
     assert r.status_code == 200
     assert r.json() == []
+
+
+# ── Streaming desligado (deploy enxuto) ───────────────────────────────────────
+
+
+async def test_chat_stream_404_quando_streaming_desligado(
+    client_chat, mock_chat_svc, mock_usage_svc, monkeypatch
+):
+    """Com ``CHAT_STREAMING_ENABLED=false`` o SSE some e nada é cobrado."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "chat_streaming_enabled", False)
+    mock_chat_svc.chat_stream = lambda **kwargs: _async_gen([])
+
+    r = await client_chat.post(
+        "/api/v1/chat/stream", data={"messages": "oi", "model": "ensemble"}
+    )
+
+    assert r.status_code == 404
+    assert "POST /chat" in r.json()["detail"]
+    mock_usage_svc.record_usage.assert_not_called()
+
+
+async def test_resume_stream_404_quando_streaming_desligado(
+    client_chat, mock_chat_svc, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "chat_streaming_enabled", False)
+
+    r = await client_chat.post(
+        "/api/v1/chat/resume/stream", json={"thread_id": "sess-1", "response": "sim"}
+    )
+
+    assert r.status_code == 404
+
+
+async def test_chat_sincrono_segue_com_streaming_desligado(
+    client_chat, mock_chat_svc, monkeypatch
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "chat_streaming_enabled", False)
+    mock_chat_svc.chat = AsyncMock(
+        return_value=ChatResponse(role="assistant", content="ok", session_id="s-1")
+    )
+
+    r = await client_chat.post("/api/v1/chat", data={"messages": "oi"})
+
+    assert r.status_code == 200
+    assert r.json()["session_id"] == "s-1"

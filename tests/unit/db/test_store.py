@@ -88,23 +88,18 @@ def test_build_index_config_uses_settings(monkeypatch):
 
 
 async def test_get_store_caches_singleton(monkeypatch):
-    """Primeira chamada cria o store via from_conn_string + setup(); segunda reusa."""
+    """Primeira chamada abre o pool + setup(); segunda reusa o mesmo store."""
     monkeypatch.setattr(
         store_module,
         "_build_index_config",
         lambda: {"dims": 1536, "embed": MagicMock(), "fields": ["summary_text"]},
     )
+    fake_pool = AsyncMock(name="pool")
+    open_pool = AsyncMock(return_value=fake_pool)
+    monkeypatch.setattr("app.db.langgraph_pool.open_langgraph_pool", open_pool)
 
     fake_store = AsyncMock(name="AsyncPostgresStore-instance")
-
-    # Simula o async context manager retornado por from_conn_string.
-    fake_cm = AsyncMock(name="from_conn_string-cm")
-    fake_cm.__aenter__ = AsyncMock(return_value=fake_store)
-    fake_cm.__aexit__ = AsyncMock(return_value=False)
-
-    fake_store_cls = MagicMock()
-    fake_store_cls.from_conn_string = MagicMock(return_value=fake_cm)
-
+    fake_store_cls = MagicMock(return_value=fake_store)
     fake_module = MagicMock()
     fake_module.AsyncPostgresStore = fake_store_cls
 
@@ -117,26 +112,26 @@ async def test_get_store_caches_singleton(monkeypatch):
 
     assert result1 is fake_store
     assert result2 is fake_store
-    # setup() so chama 1x; from_conn_string so chama 1x
+    # Pool (não conexão única): sobrevive a conexão derrubada pelo servidor.
+    open_pool.assert_awaited_once()
+    assert fake_store_cls.call_args.kwargs["conn"] is fake_pool
     fake_store.setup.assert_awaited_once()
-    fake_store_cls.from_conn_string.assert_called_once()
+    assert store_module._store_holder["pool"] is fake_pool
 
 
 async def test_close_store_resets_singleton(monkeypatch):
-    """Apos close_store(), singleton volta a None e proxima chamada reinstancia."""
+    """Apos close_store(), singleton volta a None e o pool é fechado."""
     fake_store = AsyncMock(name="store")
-    fake_cm = AsyncMock(name="cm")
-    fake_cm.__aenter__ = AsyncMock(return_value=fake_store)
-    fake_cm.__aexit__ = AsyncMock(return_value=False)
+    fake_pool = AsyncMock(name="pool")
 
     store_module._store_holder["store"] = fake_store
-    store_module._store_holder["cm"] = fake_cm
+    store_module._store_holder["pool"] = fake_pool
 
     await store_module.close_store()
 
     assert store_module._store_holder["store"] is None
-    assert store_module._store_holder["cm"] is None
-    fake_cm.__aexit__.assert_awaited_once_with(None, None, None)
+    assert store_module._store_holder["pool"] is None
+    fake_pool.close.assert_awaited_once()
 
 
 async def test_close_store_noop_when_not_initialized():

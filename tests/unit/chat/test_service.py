@@ -1097,3 +1097,63 @@ async def test_get_graph_handles_checkpointer_factory_failure(
         assert g is graph
         # build_graph foi chamado com checkpointer=None
         assert bg.call_args.kwargs["checkpointer"] is None
+
+
+async def test_chat_stream_sem_tokens_le_snapshot_em_vez_de_rodar_o_turno_de_novo(
+    chat_service,
+):
+    """O fallback antigo chamava ``graph.ainvoke`` e repetia LLM + tools."""
+    from langchain_core.messages import HumanMessage
+
+    graph = MagicMock()
+
+    async def _empty_events(*args, **kwargs):
+        return
+        yield  # pragma: no cover
+
+    graph.astream_events = _empty_events
+    graph.ainvoke = AsyncMock()
+    snapshot = MagicMock()
+    snapshot.tasks = []
+    snapshot.values = {
+        "messages": [
+            HumanMessage(content="turno anterior"),
+            AIMessage(content="resposta antiga"),
+            HumanMessage(content="x"),
+            AIMessage(content="resposta do checkpoint"),
+        ],
+        "diagnoses_in_turn": [],
+    }
+    graph.aget_state = AsyncMock(return_value=snapshot)
+
+    with patch("app.domains.chat.service.build_graph", return_value=graph):
+        await _drain(
+            chat_service.chat_stream(
+                user_id="user-1",
+                session_id=None,
+                message_text="x",
+                image_bytes=None,
+                image_mime=None,
+                image_filename=None,
+                model_id="ensemble",
+            )
+        )
+
+    graph.ainvoke.assert_not_called()
+    persisted = chat_service._message_repo.create.await_args_list[-1].kwargs
+    assert persisted["content"] == "resposta do checkpoint"
+
+
+async def test_final_text_from_snapshot_ignora_turno_anterior():
+    from langchain_core.messages import HumanMessage
+
+    from app.domains.chat.service import ChatService
+
+    graph = MagicMock()
+    snapshot = MagicMock()
+    snapshot.values = {
+        "messages": [AIMessage(content="velha"), HumanMessage(content="nova pergunta")]
+    }
+    graph.aget_state = AsyncMock(return_value=snapshot)
+
+    assert await ChatService._final_text_from_snapshot(graph, {}) == ""

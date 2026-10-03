@@ -269,6 +269,24 @@ _onnx_classifiers: "dict[str, OnnxClassifier]" = {}
 _onnx_loaded = False
 
 
+def _configured_onnx_models() -> list[str]:
+    """Modelos pedidos em ``INFERENCE_MODELS`` (chaves canônicas conhecidas).
+
+    Chave desconhecida derruba o boot: um typo no deploy não pode virar um
+    registro vazio que só aparece no primeiro diagnóstico.
+    """
+    from app.config import settings
+
+    keys = settings.inference_model_keys
+    unknown = [k for k in keys if k not in _ONNX_MODELS]
+    if unknown or not keys:
+        raise RuntimeError(
+            f"INFERENCE_MODELS invalido: {settings.inference_models!r}. "
+            f"Use uma lista separada por virgula de: {', '.join(_ONNX_MODELS)}."
+        )
+    return keys
+
+
 def _get_onnx_classifiers() -> "dict[str, OnnxClassifier]":
     """Retorna ``{chave_canônica: OnnxClassifier}`` para os modelos disponíveis.
 
@@ -290,7 +308,8 @@ def _get_onnx_classifiers() -> "dict[str, OnnxClassifier]":
         return _onnx_classifiers
 
     repo_root = Path(__file__).resolve().parents[2]
-    for key, (rel_path, input_size) in _ONNX_MODELS.items():
+    for key in _configured_onnx_models():
+        rel_path, input_size = _ONNX_MODELS[key]
         try:
             from app.domains.inference.onnx_classifier import OnnxClassifier
 
@@ -333,7 +352,7 @@ async def get_inference_service(  # type: ignore[no-untyped-def]
         )
     diseases = await disease_repo.list_by_crop(crop.id)
     classifiers = _get_onnx_classifiers()
-    missing_models = set(_ONNX_MODELS) - set(classifiers)
+    missing_models = set(_configured_onnx_models()) - set(classifiers)
     if settings.inference_use_onnx and missing_models:
         raise RuntimeError(
             "INFERENCE_USE_ONNX=true, mas os modelos ONNX exigidos nao carregaram: "
@@ -363,7 +382,7 @@ async def get_inference_service_for_crop(  # type: ignore[no-untyped-def]
         )
     diseases = await disease_repo.list_by_crop(crop.id)
     classifiers = _get_onnx_classifiers()
-    missing_models = set(_ONNX_MODELS) - set(classifiers)
+    missing_models = set(_configured_onnx_models()) - set(classifiers)
     if settings.inference_use_onnx and missing_models:
         raise RuntimeError(
             "INFERENCE_USE_ONNX=true, mas os modelos ONNX exigidos nao carregaram: "

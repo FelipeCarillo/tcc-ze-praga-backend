@@ -273,3 +273,48 @@ async def test_get_current_user_success():
     token = create_access_token(user.id)
     result = await get_current_user(token=token, repo=mock_repo)
     assert result.id == user.id
+
+
+# ── INFERENCE_MODELS: deploy com subconjunto de modelos ──────────────────────
+
+
+def test_configured_onnx_models_aceita_subconjunto(monkeypatch):
+    from app.config import settings
+    from app.core.dependencies import _configured_onnx_models
+
+    monkeypatch.setattr(settings, "inference_models", " efficientnet_b4 ")
+    assert _configured_onnx_models() == ["efficientnet_b4"]
+
+
+@pytest.mark.parametrize("valor", ["", "efficientnet", "efficientnet_b4,xpto"])
+def test_configured_onnx_models_rejeita_chave_invalida(monkeypatch, valor):
+    from app.config import settings
+    from app.core.dependencies import _configured_onnx_models
+
+    monkeypatch.setattr(settings, "inference_models", valor)
+    with pytest.raises(RuntimeError, match="INFERENCE_MODELS"):
+        _configured_onnx_models()
+
+
+def test_get_onnx_classifiers_carrega_so_os_configurados(monkeypatch):
+    """Só o EfficientNet-B4 entra na memória quando é o único configurado."""
+    from app.config import settings
+    from app.core import dependencies
+    from app.domains.inference.onnx_classifier import OnnxClassifier
+
+    carregados: list[str] = []
+
+    def _fake_from_path(path, input_size=380):  # noqa: ANN001, ANN202
+        carregados.append(path.name)
+        return MagicMock()
+
+    monkeypatch.setattr(settings, "inference_use_onnx", True)
+    monkeypatch.setattr(settings, "inference_models", "efficientnet_b4")
+    monkeypatch.setattr(dependencies, "_onnx_loaded", False)
+    monkeypatch.setattr(dependencies, "_onnx_classifiers", {})
+    monkeypatch.setattr(OnnxClassifier, "from_path", staticmethod(_fake_from_path))
+
+    registro = dependencies._get_onnx_classifiers()
+
+    assert list(registro) == ["efficientnet_b4"]
+    assert carregados == ["soja_efficientnet_b4.onnx"]

@@ -71,13 +71,13 @@ def _sample_image() -> bytes:
 
 async def _verify_onnx() -> None:
     from app.config import settings
-    from app.core.dependencies import _ONNX_MODELS, _get_onnx_classifiers
+    from app.core.dependencies import _configured_onnx_models, _get_onnx_classifiers
 
     if not settings.inference_use_onnx:
         raise RuntimeError("INFERENCE_USE_ONNX precisa estar true no modo local real.")
 
     classifiers = _get_onnx_classifiers()
-    missing = set(_ONNX_MODELS) - set(classifiers)
+    missing = set(_configured_onnx_models()) - set(classifiers)
     if missing:
         raise RuntimeError(f"Modelos ONNX ausentes: {', '.join(sorted(missing))}")
 

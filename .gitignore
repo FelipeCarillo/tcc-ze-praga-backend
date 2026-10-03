@@ -138,6 +138,7 @@ celerybeat.pid
 .env
 .env.*
 !.env.example
+!.env.*.example
 .local-storage/
 .envrc
 .venv
@@ -224,3 +225,6 @@ scripts/deploy/cloudrun.env
 .env*.bak
 # Config da execução local (carrega chaves reais de OpenAI e Resend)
 .env.local
+
+# Variáveis do Lambda geradas por scripts/deploy/env_to_lambda.py (têm segredo)
+lambda-env.json

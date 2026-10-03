@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 
 # ── Singleton holder ──────────────────────────────────────────────────────────
 
-# Holds the active AsyncPostgresStore + the cm context manager keeping its
+# Holds the active AsyncPostgresStore + the psycopg pool keeping its
 # connection pool alive. Reset on lifespan shutdown via ``close_store()``.
-_store_holder: dict[str, object] = {"store": None, "cm": None, "lock": None}
+_store_holder: dict[str, object] = {"store": None, "pool": None, "lock": None}
 
 
 def _make_conn_string() -> str:
@@ -104,14 +104,15 @@ async def get_store() -> AsyncPostgresStore:
         if _store_holder["store"] is None:
             from langgraph.store.postgres.aio import AsyncPostgresStore
 
-            cm = AsyncPostgresStore.from_conn_string(
-                _make_conn_string(),
-                index=_build_index_config(),
-            )
-            store = await cm.__aenter__()
+            from app.db.langgraph_pool import open_langgraph_pool
+
+            # Pool com check em vez de conexão única: sobrevive a conexão
+            # derrubada pelo pooler ou por processo congelado (Lambda).
+            pool = await open_langgraph_pool(_make_conn_string())
+            store = AsyncPostgresStore(conn=pool, index=_build_index_config())
             await store.setup()
             _store_holder["store"] = store
-            _store_holder["cm"] = cm
+            _store_holder["pool"] = pool
 
     active = _store_holder["store"]
     assert active is not None
@@ -120,15 +121,15 @@ async def get_store() -> AsyncPostgresStore:
 
 async def close_store() -> None:
     """Fecha o Store singleton — chamar no lifespan shutdown do FastAPI."""
-    cm = _store_holder.get("cm")
-    if cm is not None:
-        await cm.__aexit__(None, None, None)  # type: ignore[attr-defined]
+    pool = _store_holder.get("pool")
+    if pool is not None:
+        await pool.close()  # type: ignore[attr-defined]
     _store_holder["store"] = None
-    _store_holder["cm"] = None
+    _store_holder["pool"] = None
 
 
 def reset_store_for_tests() -> None:
     """Reseta o singleton — uso EXCLUSIVO em testes."""
     _store_holder["store"] = None
-    _store_holder["cm"] = None
+    _store_holder["pool"] = None
     _store_holder["lock"] = None

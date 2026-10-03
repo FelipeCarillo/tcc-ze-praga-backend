@@ -426,10 +426,8 @@ class ChatService:
             assistant_text = "".join(collected_chunks).strip()
             if not assistant_text:
                 # Fallback: ChatModel pode não ter emitido tokens streamados (FakeLLM,
-                # erro de streaming, etc). Recupera o final via invoke não-stream
-                # como safety net pra persistir algo coerente.
-                result = await graph.ainvoke(initial_state, config=config)
-                assistant_text = self._extract_final_text(result["messages"])
+                # erro de streaming, etc). A resposta já está no checkpoint.
+                assistant_text = await self._final_text_from_snapshot(graph, config)
 
             # Se o agente diagnosticou via analyze_image, o id ficou em
             # ``diagnoses_in_turn`` no snapshot — carrega e emite o evento.
@@ -568,8 +566,7 @@ class ChatService:
 
             assistant_text = "".join(collected_chunks).strip()
             if not assistant_text:
-                result = await graph.ainvoke(None, config=config)
-                assistant_text = self._extract_final_text(result["messages"])
+                assistant_text = await self._final_text_from_snapshot(graph, config)
 
             await self._message_repo.create(
                 session_id=thread_id,
@@ -782,6 +779,28 @@ class ChatService:
         except Exception:  # noqa: BLE001
             logger.exception("Falha ao carregar diagnosis %s do turno", ids[-1])
             return None
+
+    @classmethod
+    async def _final_text_from_snapshot(cls, graph: Any, config: dict[str, Any]) -> str:
+        """Lê a resposta do turno no snapshot do checkpointer.
+
+        Substitui o fallback antigo, que rodava ``graph.ainvoke`` de novo: isso
+        repetia o turno inteiro (LLM, tools e até um segundo diagnóstico) só pra
+        recuperar um texto que já estava salvo no checkpoint. Considera apenas
+        as mensagens depois do último ``HumanMessage`` para não devolver a
+        resposta de um turno anterior.
+        """
+        try:
+            snapshot = await graph.aget_state(config)
+            messages = list(snapshot.values.get("messages", []))
+        except Exception:  # noqa: BLE001 — sem snapshot, sem texto
+            return ""
+        turn: list[Any] = []
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                break
+            turn.append(msg)
+        return cls._extract_final_text(list(reversed(turn)))
 
     @staticmethod
     def _extract_final_text(messages: list[Any]) -> str:
