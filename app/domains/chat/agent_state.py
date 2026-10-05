@@ -68,6 +68,9 @@ class ChatState(TypedDict, total=False):
 
     # preferencias do usuario
     selected_model: str  # ex: "ensemble" (NAO escolhido pelo LLM)
+    # TCC-093: talhao escolhido na UI antes da foto. Como o modelo, NAO e'
+    # decidido pelo LLM: as tools que persistem laudos leem daqui.
+    selected_talhao_id: str | None
     detected_crop_id: str | None  # set por identify_crop V2 ou prefs
     preferred_action_level: str  # "essencial" | "campo" | "especialista"
 

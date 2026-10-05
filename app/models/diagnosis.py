@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, func, text
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,6 +11,11 @@ from app.db.base import Base
 
 class Diagnosis(Base):
     __tablename__ = "diagnoses"
+    # Espelha a migration 0012: historico agrupado filtra por usuario,
+    # particiona por talhao e ordena pelo mais recente.
+    __table_args__ = (
+        Index("ix_diagnoses_user_talhao_created", "user_id", "talhao_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(
@@ -36,6 +41,12 @@ class Diagnosis(Base):
     model_used: Mapped[str] = mapped_column(String, nullable=False)
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
     image_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # TCC-093: talhao onde a folha foi fotografada. Nullable — laudos antigos e
+    # os feitos sem escolher talhao ficam no grupo "Sem talhao". SET NULL no
+    # delete: apagar o talhao nao apaga o historico.
+    talhao_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("talhoes.id", ondelete="SET NULL"), nullable=True
+    )
     # TCC-056: evidencia externa persistida pelo gather_evidence_node (search_web +
     # search_scientific) em paralelo ao action_plan. Schema dos items eh validado
     # pelo ``DiagnosisSourceSchema`` em camada de aplicacao.
@@ -50,6 +61,7 @@ class Diagnosis(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="diagnoses")  # type: ignore[name-defined] # noqa: F821
+    talhao: Mapped["Talhao | None"] = relationship()  # type: ignore[name-defined] # noqa: F821
     top3: Mapped[list["DiagnosisTop3"]] = relationship(  # type: ignore[name-defined] # noqa: F821
         back_populates="diagnosis",
         cascade="all, delete-orphan",

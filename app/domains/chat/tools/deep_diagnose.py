@@ -80,6 +80,7 @@ def build_deep_diagnose_tool(
                 "image_batch": [f.b64 or "" for f in targets],
                 "image_ids": [f.id for f in targets],
                 "model_id": model_id,
+                "talhao_id": state.get("selected_talhao_id"),
             }
         )
 

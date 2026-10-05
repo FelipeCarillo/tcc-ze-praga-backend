@@ -255,6 +255,7 @@ class ChatService:
         image_mime: str | None,
         image_filename: str | None,
         model_id: str,
+        talhao_id: str | None = None,
     ) -> ChatResponse:
         """Roda o agente, persiste o turno e devolve a resposta consolidada.
 
@@ -297,6 +298,7 @@ class ChatService:
                 "current_user_id": user_id,
                 "current_session_id": session.id,
                 "selected_model": model_id,
+                "selected_talhao_id": talhao_id,
                 "plan_features": plan_features,
                 "uploaded_files": uploaded_files,
                 "diagnoses_in_turn": [],
@@ -342,6 +344,7 @@ class ChatService:
         image_mime: str | None,
         image_filename: str | None,
         model_id: str,
+        talhao_id: str | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Variante streaming — yields dicts {event, data} pro SSE endpoint.
 
@@ -380,6 +383,7 @@ class ChatService:
             "current_user_id": user_id,
             "current_session_id": session.id,
             "selected_model": model_id,
+            "selected_talhao_id": talhao_id,
             "plan_features": plan_features,
             "uploaded_files": uploaded_files,
             "diagnoses_in_turn": [],

@@ -169,6 +169,7 @@ def build_analyze_image_tool(
             image_url=storage_key,
             image_name=result.image_name,
             top3=result.top3,
+            talhao_id=state.get("selected_talhao_id"),
         )
         crop_uuid = (
             inference_svc.disease_catalog[0].crop_id

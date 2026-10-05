@@ -1,17 +1,24 @@
+import logging
 from collections.abc import Callable
 from typing import Any, Literal
 
 from app.core.exceptions import ForbiddenError, NotFoundError
-from app.domains.diagnoses.dto import DiagnosisDTO
+from app.domains.diagnoses.dto import DiagnosisDTO, TalhaoGroupDTO
 from app.domains.diagnoses.repository import DiagnosisRepository
 from app.domains.diagnoses.schemas import (
     CreateDiagnosisRequest,
     DiagnosisFilters,
     DiagnosisResponse,
     DiagnosisSourceSchema,
+    TalhaoGroupResponse,
     Top3PredictionSchema,
 )
 from app.shared.pagination import PaginatedResponse
+
+logger = logging.getLogger(__name__)
+
+# Quantos laudos recentes cada grupo do historico por talhao traz (TCC-093).
+RECENT_PER_TALHAO = 3
 
 
 class DiagnosisService:
@@ -35,6 +42,18 @@ class DiagnosisService:
     async def create(
         self, user_id: str, request: CreateDiagnosisRequest, *, crop_id: str
     ) -> DiagnosisResponse:
+        # TCC-093: todos os caminhos de criacao (chat, sub-grafo, REST) passam
+        # por aqui. Talhao alheio ou apagado vira "Sem talhao" em vez de
+        # derrubar o diagnostico, que e' o que o usuario veio buscar.
+        if request.talhao_id and not await self._repo.talhao_belongs_to_user(
+            request.talhao_id, user_id
+        ):
+            logger.warning(
+                "talhao_id %s nao pertence ao usuario %s; laudo fica sem talhao",
+                request.talhao_id,
+                user_id,
+            )
+            request = request.model_copy(update={"talhao_id": None})
         diagnosis = await self._repo.create(user_id, request, crop_id=crop_id)
         return self._to_response(diagnosis, self._resolve_for([diagnosis]))
 
@@ -58,6 +77,28 @@ class DiagnosisService:
             limit=filters.limit,
         )
 
+    async def set_talhao(
+        self, diagnosis_id: str, user_id: str, talhao_id: str | None
+    ) -> DiagnosisResponse:
+        """Move o laudo para outro talhao (None = "Sem talhao")."""
+        if talhao_id is not None and not await self._repo.talhao_belongs_to_user(
+            talhao_id, user_id
+        ):
+            raise NotFoundError("Talhao", talhao_id)
+        diagnosis = await self._repo.set_talhao(diagnosis_id, user_id, talhao_id)
+        if not diagnosis:
+            raise NotFoundError("Diagnosis", diagnosis_id)
+        return self._to_response(diagnosis, self._resolve_for([diagnosis]))
+
+    async def group_by_talhao(
+        self, user_id: str, per_group: int = RECENT_PER_TALHAO
+    ) -> list[TalhaoGroupResponse]:
+        """Historico agrupado por talhao, com os laudos recentes de cada um."""
+        groups = await self._repo.group_by_talhao(user_id, per_group)
+        # Uma assinatura de URLs so' para todas as miniaturas da tela.
+        urls = self._resolve_for([d for g in groups for d in g.recent])
+        return [self._to_group_response(g, urls) for g in groups]
+
     async def delete(self, diagnosis_id: str, user_id: str) -> None:
         found = await self._repo.delete(diagnosis_id, user_id)
         if not found:
@@ -80,6 +121,21 @@ class DiagnosisService:
         if not keys:
             return {}
         return self._resolve_image_urls(keys)
+
+    @classmethod
+    def _to_group_response(
+        cls, g: TalhaoGroupDTO, image_urls: dict[str, str]
+    ) -> TalhaoGroupResponse:
+        return TalhaoGroupResponse(
+            talhao_id=g.talhao_id,
+            talhao_nome=g.talhao_nome,
+            total=g.total,
+            last_at=g.last_at,
+            # ``recent`` vem do mais novo pro mais antigo; a tendencia le ao
+            # contrario, como uma linha do tempo.
+            severity_trend=[d.severity for d in reversed(g.recent)],
+            recent=[cls._to_response(d, image_urls) for d in g.recent],
+        )
 
     @staticmethod
     def _to_response(
@@ -113,6 +169,8 @@ class DiagnosisService:
             sources=[
                 _safe_source(s) for s in d.sources if isinstance(s, dict)
             ],
+            talhao_id=d.talhao_id,
+            talhao_nome=d.talhao_nome,
         )
 
 

@@ -505,3 +505,30 @@ async def test_build_diagnosis_graph_runs_batch(
     assert final["persisted_ids"] == ["diag-0", "diag-1", "diag-2"]
     assert mock_inference_svc.predict.call_count == 3
     assert mock_diagnosis_svc.create.await_count == 3
+
+
+async def test_persist_node_grava_o_talhao_do_lote(mock_diagnosis_svc, mock_inference_svc):
+    """TCC-093: todas as fotos de um lote vao para o talhao escolhido."""
+    pred = {
+        "disease_id": "ferrugem-asiatica",
+        "disease_name": "Ferrugem Asiática",
+        "severity": "alta",
+        "confidence": 0.91,
+        "top3": [],
+    }
+    state = {
+        "user_id": "user-uuid-1",
+        "model_id": "ensemble",
+        "talhao_id": "talhao-sede",
+        "image_ids": ["a.jpg", "b.jpg"],
+        "predictions": [pred, pred],
+    }
+    mock_diagnosis_svc.create.side_effect = [
+        _diagnosis_response("diag-1"),
+        _diagnosis_response("diag-2"),
+    ]
+
+    await persist_node(state, diagnosis_svc=mock_diagnosis_svc, inference_svc=mock_inference_svc)
+
+    talhoes = [c.args[1].talhao_id for c in mock_diagnosis_svc.create.await_args_list]
+    assert talhoes == ["talhao-sede", "talhao-sede"]

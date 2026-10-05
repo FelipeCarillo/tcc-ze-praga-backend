@@ -162,3 +162,25 @@ async def test_deep_diagnose_skips_when_filter_excludes_all() -> None:
     )
     parsed = json.loads(raw)
     assert parsed == {"error": "Nenhuma imagem disponivel"}
+
+
+async def test_deep_diagnose_repassa_o_talhao_ao_subgrafo() -> None:
+    """TCC-093: o lote herda o talhao escolhido na UI."""
+    graph = _graph_invoker()
+    seen: dict = {}
+    original = graph.ainvoke
+
+    async def _spy(state):
+        seen.update(state)
+        return await original(state)
+
+    graph.ainvoke = _spy
+    tool = build_deep_diagnose_tool(_factory(graph))
+    state = {
+        "current_user_id": "u-1",
+        "selected_model": "ensemble",
+        "selected_talhao_id": "talhao-sede",
+        "uploaded_files": [_file("a")],
+    }
+    await tool.ainvoke({"image_ids": None, "crop_id": None, "state": state})
+    assert seen["talhao_id"] == "talhao-sede"

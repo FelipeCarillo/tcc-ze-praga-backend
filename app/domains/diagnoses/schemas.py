@@ -48,6 +48,9 @@ class CreateDiagnosisRequest(BaseModel):
     image_name: str | None = None
     top3: list[Top3PredictionSchema] = Field(default_factory=list)
     sources: list[DiagnosisSourceSchema] = Field(default_factory=list)
+    # TCC-093: talhao onde a folha foi fotografada. Talhao de outro usuario
+    # (ou inexistente) e' descartado na persistencia, nunca vinculado.
+    talhao_id: str | None = None
 
 
 class DiagnosisResponse(BaseModel):
@@ -64,11 +67,38 @@ class DiagnosisResponse(BaseModel):
     created_at: datetime
     top3: list[Top3PredictionSchema]
     sources: list[DiagnosisSourceSchema] = Field(default_factory=list)
+    talhao_id: str | None = None
+    talhao_nome: str | None = None
+
+
+class SetDiagnosisTalhaoRequest(BaseModel):
+    """Move um laudo para um talhao (``None`` = "Sem talhao")."""
+
+    talhao_id: str | None = None
+
+
+class TalhaoGroupResponse(BaseModel):
+    """Grupo do historico por talhao (TCC-093). ``talhao_id`` None = sem talhao."""
+
+    talhao_id: str | None
+    talhao_nome: str | None
+    total: int
+    last_at: datetime | None
+    # Severidades do mais antigo pro mais recente entre os laudos de ``recent``
+    # — a UI desenha a tendencia ("piorando") sem outra consulta.
+    severity_trend: list[str]
+    recent: list[DiagnosisResponse]
+
+
+# Valor de ``talhao_id`` no filtro que seleciona os laudos sem talhao.
+SEM_TALHAO = "sem-talhao"
 
 
 class DiagnosisFilters(BaseModel):
     severity: SeverityEnum | None = None
     search: str | None = None
+    # TCC-093: id de um talhao, ou ``SEM_TALHAO`` para os laudos sem vinculo.
+    talhao_id: str | None = None
     page: int = Field(default=1, ge=1)
     limit: int = Field(default=20, ge=1, le=100)
 

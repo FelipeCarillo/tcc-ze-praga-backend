@@ -37,6 +37,8 @@ from app.domains.diagnoses.schemas import (
     CreateDiagnosisRequest,
     DiagnosisFilters,
     DiagnosisResponse,
+    SetDiagnosisTalhaoRequest,
+    TalhaoGroupResponse,
     Top3PredictionSchema,
 )
 from app.domains.diagnoses.service import DiagnosisService
@@ -91,6 +93,7 @@ async def analyze(
     images: list[UploadFile] = File(...),
     crop_id: str = Form(default="soja"),
     model: str = Form(default="ensemble"),
+    talhao_id: str | None = Form(default=None),
     current_user: UserDTO = Depends(require_quota_dual),
     auth_method: str = Depends(auth_method_dual),
     diagnosis_graph_factory: Callable[[str], Any] = Depends(get_diagnosis_graph_factory),
@@ -125,6 +128,7 @@ async def analyze(
             "image_ids": image_ids,
             "model_id": effective_model,
             "plan_features": plan_features.model_dump(),
+            "talhao_id": talhao_id or None,
         }
     )
 
@@ -147,6 +151,8 @@ async def analyze(
                 image_url=dto.image_url,
                 image_name=dto.image_name,
                 created_at=dto.created_at,
+                talhao_id=dto.talhao_id,
+                talhao_nome=dto.talhao_nome,
                 top3=[
                     Top3PredictionSchema(
                         rank=t.rank,
@@ -246,11 +252,32 @@ async def list_diagnoses(
     limit: int = Query(default=20, ge=1, le=100),
     severity: SeverityEnum | None = Query(default=None),
     search: str | None = Query(default=None),
+    talhao_id: str | None = Query(
+        default=None,
+        description='Id do talhao, ou "sem-talhao" para os laudos sem vinculo.',
+    ),
     current_user: UserDTO = Depends(get_current_user),
     service: DiagnosisService = Depends(get_diagnosis_service),
 ) -> PaginatedResponse[DiagnosisResponse]:
-    filters = DiagnosisFilters(page=page, limit=limit, severity=severity, search=search)
+    filters = DiagnosisFilters(
+        page=page, limit=limit, severity=severity, search=search, talhao_id=talhao_id
+    )
     return await service.list_for_user(current_user.id, filters)
+
+
+@router.get("/por-talhao", response_model=list[TalhaoGroupResponse])
+async def list_diagnoses_by_talhao(
+    per_group: int = Query(default=3, ge=1, le=10),
+    current_user: UserDTO = Depends(get_current_user),
+    service: DiagnosisService = Depends(get_diagnosis_service),
+) -> list[TalhaoGroupResponse]:
+    """Historico agrupado por talhao (TCC-093).
+
+    Um grupo por talhao do usuario (inclusive os ainda sem laudo) e, no fim,
+    o grupo "Sem talhao" (``talhao_id`` null) quando houver laudos sem vinculo.
+    Cada grupo traz o total e os ``per_group`` laudos mais recentes.
+    """
+    return await service.group_by_talhao(current_user.id, per_group)
 
 
 @router.get("/semantic", response_model=list[SemanticDiagnosisHit])
@@ -300,6 +327,17 @@ async def get_diagnosis(
     service: DiagnosisService = Depends(get_diagnosis_service),
 ) -> DiagnosisResponse:
     return await service.get_by_id(diagnosis_id, current_user.id)
+
+
+@router.patch("/{diagnosis_id}/talhao", response_model=DiagnosisResponse)
+async def set_diagnosis_talhao(
+    diagnosis_id: str,
+    body: SetDiagnosisTalhaoRequest,
+    current_user: UserDTO = Depends(get_current_user),
+    service: DiagnosisService = Depends(get_diagnosis_service),
+) -> DiagnosisResponse:
+    """Move o laudo para outro talhao (``talhao_id`` null = "Sem talhao")."""
+    return await service.set_talhao(diagnosis_id, current_user.id, body.talhao_id)
 
 
 @router.delete("/{diagnosis_id}", status_code=204)

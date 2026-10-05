@@ -10,8 +10,8 @@ from app.db.base import Base
 class Talhao(Base):
     """Talhão (área de cultivo) cadastrado por um produtor.
 
-    Registro simples por usuário — usado no Perfil e, futuramente, para
-    agrupar diagnósticos por área.
+    Registro simples por usuário — usado no Perfil e para agrupar os
+    diagnósticos por área no histórico (``diagnoses.talhao_id``, TCC-093).
     """
 
     __tablename__ = "talhoes"
