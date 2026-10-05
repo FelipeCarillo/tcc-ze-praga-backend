@@ -25,6 +25,18 @@ def test_get_chat_model_sends_configured_temperature(monkeypatch):
     assert init.call_args.kwargs["temperature"] == 0.0
 
 
+def test_get_chat_model_forwards_provider_kwargs_from_settings(monkeypatch):
+    """LLM_MODEL_KWARGS chega ao construtor (ex.: Responses API do gpt-6)."""
+    monkeypatch.setattr(llm_module.settings, "llm_temperature", None)
+    monkeypatch.setattr(
+        llm_module.settings, "llm_model_kwargs", {"use_responses_api": True}
+    )
+    with patch.object(llm_module, "init_chat_model", return_value=MagicMock()) as init:
+        llm_module.get_chat_model("openai:gpt-6-luna", timeout=5)
+    assert init.call_args.kwargs["use_responses_api"] is True
+    assert init.call_args.kwargs["timeout"] == 5
+
+
 def test_get_embeddings_normalizes_legacy_id(monkeypatch):
     with patch("langchain.embeddings.init_embeddings", return_value="emb") as init:
         assert llm_module.get_embeddings("text-embedding-3-small") == "emb"

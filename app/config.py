@@ -1,3 +1,5 @@
+from typing import Any
+
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -48,6 +50,12 @@ class Settings(BaseSettings):
     # modelos de raciocínio (gpt-5, o-series) recusam ``temperature`` diferente
     # do default, então fixar 0 aqui quebrava a troca de modelo.
     llm_temperature: float | None = None
+
+    # Argumentos extras repassados ao construtor do chat model do provider,
+    # em JSON. Ex.: os modelos gpt-6 só aceitam tools pela Responses API:
+    # LLM_MODEL_KWARGS={"use_responses_api": true}. Vale para chat e visão —
+    # ao trocar de provider, ajuste ou esvazie (são kwargs específicos dele).
+    llm_model_kwargs: dict[str, Any] = {}
 
     # Limites do cliente LLM — sem isso o SDK pode pendurar/retentar muito além
     # do esperado (causa do timeout de 30s no 1º turno). Bound o pior caso e
