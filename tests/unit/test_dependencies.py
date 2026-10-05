@@ -144,9 +144,21 @@ def test_get_action_plan_service():
     assert isinstance(result, ActionPlanService)
 
 
-async def test_get_inference_service():
-    """Agora async — recebe CropRepository/DiseaseRepository por DI."""
+async def test_get_inference_service(monkeypatch):
+    """Agora async — recebe CropRepository/DiseaseRepository por DI.
+
+    O registro de ONNX é simulado: o teste cobre a fiação do factory, não o
+    carregamento dos modelos (que vêm do Git LFS e não existem no checkout do
+    CI — ``test_onnx_classifier.py`` cobre o ONNX real quando ele está lá).
+    """
+    from app.core import dependencies
     from app.core.dependencies import get_inference_service
+
+    monkeypatch.setattr(
+        dependencies,
+        "_get_onnx_classifiers",
+        lambda: {k: MagicMock() for k in dependencies._configured_onnx_models()},
+    )
     from app.domains.inference.repository import (
         CropDTO,
         CropRepository,
@@ -273,3 +285,81 @@ async def test_get_current_user_success():
     token = create_access_token(user.id)
     result = await get_current_user(token=token, repo=mock_repo)
     assert result.id == user.id
+
+
+# ── INFERENCE_MODELS: deploy com subconjunto de modelos ──────────────────────
+
+
+def test_configured_onnx_models_aceita_subconjunto(monkeypatch):
+    from app.config import settings
+    from app.core.dependencies import _configured_onnx_models
+
+    monkeypatch.setattr(settings, "inference_models", " efficientnet_b4 ")
+    assert _configured_onnx_models() == ["efficientnet_b4"]
+
+
+@pytest.mark.parametrize("valor", ["", "efficientnet", "efficientnet_b4,xpto"])
+def test_configured_onnx_models_rejeita_chave_invalida(monkeypatch, valor):
+    from app.config import settings
+    from app.core.dependencies import _configured_onnx_models
+
+    monkeypatch.setattr(settings, "inference_models", valor)
+    with pytest.raises(RuntimeError, match="INFERENCE_MODELS"):
+        _configured_onnx_models()
+
+
+def test_get_onnx_classifiers_carrega_so_os_configurados(monkeypatch):
+    """Só o EfficientNet-B4 entra na memória quando é o único configurado."""
+    from app.config import settings
+    from app.core import dependencies
+    from app.domains.inference.onnx_classifier import OnnxClassifier
+
+    carregados: list[str] = []
+
+    def _fake_from_path(path, input_size=380):  # noqa: ANN001, ANN202
+        carregados.append(path.name)
+        return MagicMock()
+
+    monkeypatch.setattr(settings, "inference_use_onnx", True)
+    monkeypatch.setattr(settings, "inference_models", "efficientnet_b4")
+    monkeypatch.setattr(dependencies, "_onnx_loaded", False)
+    monkeypatch.setattr(dependencies, "_onnx_classifiers", {})
+    monkeypatch.setattr(OnnxClassifier, "from_path", staticmethod(_fake_from_path))
+
+    registro = dependencies._get_onnx_classifiers()
+
+    assert list(registro) == ["efficientnet_b4"]
+    assert carregados == ["soja_efficientnet_b4.onnx"]
+
+
+async def test_get_inference_service_falha_quando_modelo_configurado_nao_carrega(
+    monkeypatch,
+):
+    """Modo real sem o ONNX configurado não pode cair em mock calado."""
+    from app.config import settings
+    from app.core import dependencies
+    from app.domains.inference.repository import CropDTO, CropRepository, DiseaseRepository
+
+    monkeypatch.setattr(settings, "inference_use_onnx", True)
+    monkeypatch.setattr(settings, "inference_models", "efficientnet_b4,resnet50")
+    monkeypatch.setattr(
+        dependencies, "_get_onnx_classifiers", lambda: {"efficientnet_b4": MagicMock()}
+    )
+    crop_repo = MagicMock(spec=CropRepository)
+    crop_repo.get_by_slug = AsyncMock(
+        return_value=CropDTO(
+            id="soja-id",
+            slug="soja",
+            name_pt="Soja",
+            scientific_name="Glycine max",
+            kingdom="Plantae",
+            is_active=True,
+        )
+    )
+    disease_repo = MagicMock(spec=DiseaseRepository)
+    disease_repo.list_by_crop = AsyncMock(return_value=[])
+
+    with pytest.raises(RuntimeError, match="resnet50"):
+        await dependencies.get_inference_service(
+            crop_repo=crop_repo, disease_repo=disease_repo
+        )

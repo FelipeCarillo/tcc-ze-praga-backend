@@ -155,3 +155,42 @@ def test_resultado_onnx_nao_e_marcado_como_simulado():
     r = svc.predict("efficientnet", "x.jpg", image_bytes=b"img")
     assert r.simulated is False
     assert r.disease_id == "saudavel"
+
+
+# ── deploy com subconjunto de modelos (INFERENCE_MODELS) ─────────────────────
+
+
+def test_ensemble_com_um_modelo_so_e_rotulado_pelo_modelo_que_rodou():
+    """Na nuvem só o EfficientNet-B4 é carregado: "ensemble" não pode mentir."""
+    clfs = {EFFICIENTNET_B4: FakeClassifier({"mildio": 0.9, "saudavel": 0.1})}
+    svc = InferenceService(diseases=SIX_SOJA_DISEASES, classifiers=clfs)
+
+    r = svc.predict("ensemble", "x.jpg", image_bytes=b"img")
+
+    assert r.disease_id == "mildio"
+    assert r.model_id == EFFICIENTNET_B4
+    assert r.simulated is False
+
+
+def test_modelo_nao_carregado_roda_no_melhor_disponivel_sem_mock():
+    clfs = {
+        EFFICIENTNET_B4: FakeClassifier({"mildio": 0.9, "saudavel": 0.1}),
+        RESNET50: FakeClassifier({"saudavel": 0.9, "mildio": 0.1}),
+    }
+    svc = InferenceService(diseases=SIX_SOJA_DISEASES, classifiers=clfs)
+
+    r = svc.predict("vit", "x.jpg", image_bytes=b"img")
+
+    assert r.model_id == EFFICIENTNET_B4
+    assert r.disease_id == "mildio"
+    assert r.simulated is False
+
+
+def test_ensemble_com_dois_modelos_mantem_rotulo():
+    clfs = {
+        EFFICIENTNET_B4: FakeClassifier({"mildio": 0.9, "saudavel": 0.1}),
+        RESNET50: FakeClassifier({"mildio": 0.7, "saudavel": 0.3}),
+    }
+    svc = InferenceService(diseases=SIX_SOJA_DISEASES, classifiers=clfs)
+
+    assert svc.predict("ensemble", "x.jpg", image_bytes=b"img").model_id == ENSEMBLE

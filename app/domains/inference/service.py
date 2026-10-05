@@ -173,6 +173,15 @@ class InferenceService:
         ``crop_id`` reservado pra sprint A2 (catálogo por crop em runtime).
         """
         canonical = normalize_model_id(model_id)
+        effective = self._resolve_loaded_model(canonical)
+        if effective != canonical:
+            # Modelo pedido não está carregado neste deploy (INFERENCE_MODELS).
+            # Roda no melhor disponível e registra o modelo que de fato rodou —
+            # o ``model_id`` do resultado é o que vai para ``model_used``.
+            logger.info(
+                "Modelo %s nao carregado; usando %s", canonical, effective
+            )
+            canonical = model_id = effective
         members = self._resolve_members(canonical)
 
         # O mock continua disponivel apenas para testes/desenvolvimento com a
@@ -195,6 +204,26 @@ class InferenceService:
                 "Nao foi possivel analisar esta imagem. Confira se o arquivo "
                 "e uma foto valida (JPEG ou PNG) e tente de novo."
             ) from exc
+
+    def _resolve_loaded_model(self, canonical: str) -> str:
+        """Troca o modelo pedido pelo melhor carregado quando ele não existe.
+
+        Só atua com um registro multi-modelo: ``ensemble`` exige ao menos dois
+        membros (com um só, o resultado é daquele modelo e é rotulado assim) e
+        um modelo específico ausente cai no primeiro de ``_MODEL_PREFERENCE``
+        que estiver carregado. Sem registro, mantém o pedido (mock/legado).
+        """
+        loaded = self._classifiers
+        if not loaded:
+            return canonical
+        if canonical == ENSEMBLE:
+            return ENSEMBLE if len(loaded) > 1 else next(iter(loaded))
+        if canonical in loaded:
+            return canonical
+        for candidate in _MODEL_PREFERENCE:
+            if candidate in loaded:
+                return candidate
+        return canonical
 
     def _resolve_members(self, canonical: str) -> list[OnnxClassifier]:
         """Retorna os classificadores que atendem ao modelo solicitado."""

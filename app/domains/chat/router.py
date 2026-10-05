@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import settings
 from app.core.dependencies import (
     get_chat_service,
     get_current_user,
@@ -82,6 +83,19 @@ async def _transcribe_audio(audio: UploadFile | None, transcription_svc: Any) ->
     return text
 
 
+def _require_streaming() -> None:
+    """Desliga os endpoints SSE quando ``CHAT_STREAMING_ENABLED=false``.
+
+    404 (e não 501) para o cliente tratar como "rota inexistente neste
+    ambiente" e usar ``POST /chat`` / ``POST /chat/resume``.
+    """
+    if not settings.chat_streaming_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Streaming desativado neste ambiente. Use POST /chat.",
+        )
+
+
 def _extract_last_message(messages: str) -> str:
     """Parseia messages como JSON array de turnos; fallback retorna o input cru.
 
@@ -130,7 +144,7 @@ async def send_message(
     return response
 
 
-@router.post("/stream", status_code=200)
+@router.post("/stream", status_code=200, dependencies=[Depends(_require_streaming)])
 async def send_message_stream(
     messages: str = Form(...),
     model: str = Form(default=ModelEnum.ENSEMBLE),
@@ -199,7 +213,9 @@ async def resume_chat(
     )
 
 
-@router.post("/resume/stream", status_code=200)
+@router.post(
+    "/resume/stream", status_code=200, dependencies=[Depends(_require_streaming)]
+)
 async def resume_chat_stream(
     body: ResumeRequest,
     current_user: UserDTO = Depends(get_current_user),

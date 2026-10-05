@@ -23,8 +23,15 @@
     (us-east-1), o que encurta o ida-e-volta com o banco, que é o que domina
     a latência.
 
+.PARAMETER Perfil
+    "enxuto" (padrão): só o EfficientNet-B4, chat síncrono, 2 GiB / 1 vCPU e
+    timeout de 300 s. "completo": os três ONNX + SSE, 4 GiB / 2 vCPU e
+    timeout de 3600 s. Variáveis já presentes no cloudrun.env vencem os
+    padrões do perfil. Veja DEPLOY-ENXUTO.md.
+
 .EXAMPLE
     .\cloudrun.ps1 -ProjectId meu-projeto-123
+    .\cloudrun.ps1 -ProjectId meu-projeto-123 -Perfil completo
     .\cloudrun.ps1 -ProjectId meu-projeto-123 -SkipApiEnable
 
 .NOTES
@@ -40,6 +47,8 @@ param(
     [string]$ProjectId,
     [string]$Region = "us-east1",
     [string]$ServiceName = "ze-praga-api",
+    [ValidateSet("enxuto", "completo")]
+    [string]$Perfil = "enxuto",
     [switch]$SkipApiEnable
 )
 
@@ -112,6 +121,30 @@ try {
     }
     Write-Host "  $($vars.Count) variáveis lidas de cloudrun.env" -ForegroundColor DarkGray
 
+    # ── Perfil de custo ───────────────────────────────────────────────────────
+    # O enxuto carrega um modelo só e responde o chat sem SSE: a instância cabe
+    # em 2 GiB / 1 vCPU e nenhuma requisição segura a instância por minutos.
+    # Migrations e seeds saem do boot (rode `docker run ... migrate` à parte):
+    # cada cold start deixava de pagar ~10 s de alembic + seeds.
+    if ($Perfil -eq 'enxuto') {
+        $recursos = @{ Memory = '2Gi'; Cpu = '1'; Timeout = '300' }
+        $padroes = [ordered]@{
+            INFERENCE_MODELS        = 'efficientnet_b4'
+            CHAT_STREAMING_ENABLED  = 'false'
+            RUN_MIGRATIONS_ON_BOOT  = 'false'
+        }
+    } else {
+        $recursos = @{ Memory = '4Gi'; Cpu = '2'; Timeout = '3600' }
+        $padroes = [ordered]@{
+            INFERENCE_MODELS        = 'efficientnet_b4,resnet50,vit_b16'
+            CHAT_STREAMING_ENABLED  = 'true'
+        }
+    }
+    foreach ($k in $padroes.Keys) {
+        if (-not $vars.Contains($k)) { $vars[$k] = $padroes[$k] }
+    }
+    Write-Host "  Perfil $Perfil — $($recursos.Memory) / $($recursos.Cpu) vCPU" -ForegroundColor DarkGray
+
     # ── APIs ──────────────────────────────────────────────────────────────────
 
     if (-not $SkipApiEnable) {
@@ -135,12 +168,12 @@ try {
         --region $Region `
         --platform managed `
         --allow-unauthenticated `
-        --memory 4Gi `
-        --cpu 2 `
+        --memory $recursos.Memory `
+        --cpu $recursos.Cpu `
         --concurrency 4 `
         --min-instances 0 `
         --max-instances 2 `
-        --timeout 3600 `
+        --timeout $recursos.Timeout `
         --quiet `
         --set-env-vars $envArg
 

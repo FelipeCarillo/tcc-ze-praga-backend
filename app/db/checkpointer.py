@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 _holder: dict[str, object] = {
     "checkpointer": None,
-    "cm": None,
+    "pool": None,
     "lock": None,
 }
 
@@ -83,11 +83,15 @@ async def get_checkpointer() -> AsyncPostgresSaver:
         if _holder["checkpointer"] is None:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-            cm = AsyncPostgresSaver.from_conn_string(_make_conn_string())
-            saver = await cm.__aenter__()
+            from app.db.langgraph_pool import open_langgraph_pool
+
+            # Pool com check em vez de conexão única: sobrevive a conexão
+            # derrubada pelo pooler ou por processo congelado (Lambda).
+            pool = await open_langgraph_pool(_make_conn_string())
+            saver = AsyncPostgresSaver(conn=pool)
             await saver.setup()
             _holder["checkpointer"] = saver
-            _holder["cm"] = cm
+            _holder["pool"] = pool
 
     active = _holder["checkpointer"]
     assert active is not None
@@ -96,15 +100,15 @@ async def get_checkpointer() -> AsyncPostgresSaver:
 
 async def close_checkpointer() -> None:
     """Fecha o saver singleton — chamar no lifespan shutdown do FastAPI."""
-    cm = _holder.get("cm")
-    if cm is not None:
-        await cm.__aexit__(None, None, None)  # type: ignore[attr-defined]
+    pool = _holder.get("pool")
+    if pool is not None:
+        await pool.close()  # type: ignore[attr-defined]
     _holder["checkpointer"] = None
-    _holder["cm"] = None
+    _holder["pool"] = None
 
 
 def reset_checkpointer_for_tests() -> None:
     """Reseta o singleton — uso EXCLUSIVO em testes."""
     _holder["checkpointer"] = None
-    _holder["cm"] = None
+    _holder["pool"] = None
     _holder["lock"] = None

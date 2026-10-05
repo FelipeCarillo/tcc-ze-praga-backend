@@ -1,5 +1,10 @@
 # Deploy do Zé Praga
 
+> **Perfil enxuto (out/2026):** chat síncrono, só o EfficientNet-B4, 2 GiB /
+> 1 vCPU e a opção de rodar no AWS Lambda estão em
+> [DEPLOY-ENXUTO.md](DEPLOY-ENXUTO.md). Este arquivo segue valendo para
+> Supabase, Resend, Vercel e o interruptor.
+
 Guia para colocar o projeto no ar de graça, com cadastro fechado por
 verificação de e-mail e um interruptor para desligar tudo quando não estiver
 em uso.

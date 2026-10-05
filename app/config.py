@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     app_env: str = "development"
     allowed_origins: str = "http://localhost:3000"
 
+    # Endpoints SSE (``/chat/stream`` e ``/chat/resume/stream``). Na nuvem fica
+    # desligado: a resposta síncrona (``/chat``) custa os mesmos tokens, mas não
+    # prende conexão aberta — o que libera hospedagem serverless (Lambda,
+    # Cloud Run com timeout curto) e corta o tempo cobrado de instância.
+    chat_streaming_enabled: bool = True
+
     # Agent feature flags
     # HITL ligado: o ciclo esta fechado ponta a ponta — a tool dispara
     # interrupt(), o checkpointer persiste o snapshot, o frontend renderiza a
@@ -122,11 +128,27 @@ class Settings(BaseSettings):
     inference_onnx_model_path: str = "models/soja_efficientnet_b4.onnx"
     inference_onnx_input_size: int = 380
 
+    # Modelos ONNX carregados no processo (chaves canônicas, separadas por
+    # vírgula). O padrão carrega os três (~485 MB, ~4 GiB de RAM). Na nuvem,
+    # ``efficientnet_b4`` sozinho tem 98,77% de acurácia contra 99,10% do
+    # ensemble, com 67 MB — cabe numa instância de 2 GiB. Pedidos de um modelo
+    # não carregado rodam no melhor disponível e a resposta diz qual foi.
+    inference_models: str = "efficientnet_b4,resnet50,vit_b16"
+
+    # Resolução da imagem enviada ao LLM de visão no gate ``inspect_image``.
+    # "low" custa uma fração dos tokens de "high"/"auto" e basta para decidir
+    # se a foto é de uma folha — o diagnóstico em si é do ONNX, não do LLM.
+    vision_image_detail: str = "low"
+
     @staticmethod
     def parse_rate_limit(valor: str) -> tuple[int, int]:
         """``"5/3600"`` -> ``(5, 3600)`` — vezes por janela em segundos."""
         vezes, _, segundos = valor.partition("/")
         return int(vezes), int(segundos)
+
+    @property
+    def inference_model_keys(self) -> list[str]:
+        return [m.strip() for m in self.inference_models.split(",") if m.strip()]
 
     @property
     def allowed_origins_list(self) -> list[str]:

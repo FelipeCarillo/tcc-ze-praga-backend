@@ -24,9 +24,17 @@ substitutions:
   _SERVICE: ze-praga-api
   _MODELS_BUCKET: gs://ze-praga-tcc-models
   _REPO: cloud-run-source-deploy
+  # Modelos que entram na imagem (nomes sem extensão). O perfil enxuto leva só
+  # o EfficientNet-B4 (67 MB em vez de 485 MB) — combine com
+  # INFERENCE_MODELS=efficientnet_b4 no serviço. Para os três:
+  #   --substitutions=_MODELS="soja_efficientnet_b4 soja_resnet50 soja_vit_b16"
+  _MODELS: soja_efficientnet_b4
 
 steps:
-  # 1) Modelos reais por cima dos ponteiros do LFS.
+  # 1) Modelos reais por cima dos ponteiros do LFS — só os de _MODELS. Os
+  #    ponteiros dos demais saem da pasta para não irem parar na imagem.
+  #    Variáveis do bash vão com "$$": "$x" o Cloud Build trataria como
+  #    substituição e recusaria o build.
   - id: modelos
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -34,19 +42,28 @@ steps:
       - -c
       - |
         set -euo pipefail
-        gcloud storage cp "${_MODELS_BUCKET}/models/*" models/
+        for m in ${_MODELS}; do
+          gcloud storage cp "${_MODELS_BUCKET}/models/$$m.onnx" "${_MODELS_BUCKET}/models/$$m.labels.json" models/
+        done
+        for f in models/*.onnx; do
+          nome=$(basename "$$f" .onnx)
+          case " ${_MODELS} " in
+            *" $$nome "*) ;;
+            *) echo "fora da imagem: $$nome"; rm -f "$$f" "models/$$nome.labels.json" ;;
+          esac
+        done
         echo "--- modelos em models/ ---"
         ls -l models/
         # Trava de segurança: um .onnx com poucos KB é ponteiro de LFS, não
         # modelo. Falhar aqui é infinitamente melhor que servir mock calado.
         for f in models/*.onnx; do
-          tamanho=$(stat -c%s "$f")
-          if [ "$tamanho" -lt 1000000 ]; then
-            echo "ERRO: $f tem só $tamanho bytes — ponteiro de LFS, não modelo."
+          tamanho=$(stat -c%s "$$f")
+          if [ "$$tamanho" -lt 1000000 ]; then
+            echo "ERRO: $$f tem só $$tamanho bytes — ponteiro de LFS, não modelo."
             exit 1
           fi
         done
-        echo "OK: os três ONNX têm tamanho de modelo real."
+        echo "OK: modelos com tamanho real."
 
   # 2) Imagem.
   - id: build

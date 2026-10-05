@@ -85,7 +85,8 @@ def build_inspect_image_tool() -> BaseTool:
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:{image.mime};base64,{image.b64}"
+                                    "url": f"data:{image.mime};base64,{image.b64}",
+                                    "detail": settings.vision_image_detail,
                                 },
                             },
                         ]
