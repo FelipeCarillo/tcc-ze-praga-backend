@@ -83,6 +83,10 @@ def get_chat_model(model_id: str, **kwargs: Any) -> BaseChatModel:
     # (gpt-5, o-series) rejeitam valor diferente do default.
     if settings.llm_temperature is not None:
         kwargs.setdefault("temperature", settings.llm_temperature)
+    # Kwargs específicos do provider vindos do ambiente (LLM_MODEL_KWARGS) —
+    # ex.: ``use_responses_api`` para os gpt-6. Os do caller têm precedência.
+    for key, value in settings.llm_model_kwargs.items():
+        kwargs.setdefault(key, value)
     model: BaseChatModel = init_chat_model(_normalize_model_id(model_id), **kwargs)
     return model
 
