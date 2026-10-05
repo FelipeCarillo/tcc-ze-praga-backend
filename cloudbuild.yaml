@@ -101,6 +101,8 @@ images:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: E2_HIGHCPU_8
+  # Sem ``machineType``: o pool padrão (e2-standard-2) é o único coberto pelos
+  # 2.500 min/mês gratuitos do Cloud Build. O E2_HIGHCPU_8 de antes era cobrado
+  # desde o primeiro minuto, a cada push na main.
 
 timeout: 2400s

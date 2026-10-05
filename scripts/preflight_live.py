@@ -91,26 +91,23 @@ async def _verify_onnx() -> None:
 
 async def _verify_openai() -> None:
     from app.config import settings
-    from app.core.llm import get_chat_model
-    from langchain_openai import OpenAIEmbeddings
+    from app.core.llm import get_chat_model, get_embeddings, message_text
 
     chat_response = await get_chat_model(settings.chat_model).ainvoke("Responda apenas: OK")
-    if not str(chat_response.content).strip():
-        raise RuntimeError("O modelo de chat da OpenAI respondeu sem conteúdo.")
+    if not message_text(chat_response).strip():
+        raise RuntimeError(f"O modelo de chat ({settings.chat_model}) respondeu sem conteúdo.")
 
     vision_response = await get_chat_model(settings.vision_model).ainvoke("Responda apenas: OK")
-    if not str(vision_response.content).strip():
-        raise RuntimeError("O modelo de visão da OpenAI respondeu sem conteúdo.")
+    if not message_text(vision_response).strip():
+        raise RuntimeError(f"O modelo de visão ({settings.vision_model}) respondeu sem conteúdo.")
 
-    embedding = await OpenAIEmbeddings(
-        model=settings.openai_embeddings_model,
-    ).aembed_query("verificação de prontidão do Zé Praga")
-    if len(embedding) != settings.openai_embeddings_dims:
+    embedding = await get_embeddings().aembed_query("verificação de prontidão do Zé Praga")
+    if len(embedding) != settings.embeddings_dims:
         raise RuntimeError(
             "Dimensão de embedding inesperada: "
-            f"{len(embedding)} != {settings.openai_embeddings_dims}."
+            f"{len(embedding)} != {settings.embeddings_dims}."
         )
-    _ok("OpenAI respondeu com chat, visão e embeddings reais")
+    _ok("LLM respondeu com chat, visão e embeddings reais")
 
 
 async def _verify_langgraph_postgres() -> None:
