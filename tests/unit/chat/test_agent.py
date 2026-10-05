@@ -398,6 +398,7 @@ async def test_graph_uses_free_llm_model_when_plan_is_free(
         return _SentinelLLM()
 
     monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
+    monkeypatch.setattr(agent_mod.settings, "llm_use_plan_models", True)
 
     build_graph(
         _graph_tools(mock_inference_svc, mock_action_plan_svc),
@@ -423,12 +424,42 @@ async def test_graph_uses_pro_llm_model_when_plan_is_pro(
         return _SentinelLLM()
 
     monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
+    monkeypatch.setattr(agent_mod.settings, "llm_use_plan_models", True)
 
     build_graph(
         _graph_tools(mock_inference_svc, mock_action_plan_svc),
         plan_features=PRO_FEATURES,
     )
     assert sentinel_calls["init_kwargs"]["model"] == PRO_FEATURES.llm_model
+
+
+async def test_graph_uses_settings_model_for_every_plan_by_default(
+    mock_inference_svc, mock_action_plan_svc, monkeypatch
+):
+    """Sem LLM_USE_PLAN_MODELS, o modelo do plano (gpt-4o do Pro) é ignorado:
+    trocar de modelo/provider é só mudar CHAT_MODEL."""
+    from app.domains.chat import agent as agent_mod
+    from app.domains.subscriptions.features import PRO_FEATURES
+
+    sentinel_calls = {}
+
+    class _SentinelLLM:
+        def bind_tools(self, tools):
+            return FakeToolLLM(responses=[AIMessage(content="ok")])
+
+    def _fake_get_chat_model(model_id, **kwargs):
+        sentinel_calls["model"] = model_id
+        return _SentinelLLM()
+
+    monkeypatch.setattr(agent_mod, "get_chat_model", _fake_get_chat_model)
+    monkeypatch.setattr(agent_mod.settings, "llm_use_plan_models", False)
+    monkeypatch.setattr(agent_mod.settings, "chat_model", "google_genai:gemini-x")
+
+    build_graph(
+        _graph_tools(mock_inference_svc, mock_action_plan_svc),
+        plan_features=PRO_FEATURES,
+    )
+    assert sentinel_calls["model"] == "google_genai:gemini-x"
 
 
 async def test_graph_falls_back_to_settings_when_no_plan_features(

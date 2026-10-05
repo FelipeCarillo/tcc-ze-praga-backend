@@ -24,14 +24,14 @@ from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
 from app.config import settings
-from app.core.llm import get_chat_model
+from app.core.llm import get_chat_model, message_text
 from app.domains.chat.agent_state import ChatState, resolve_image
 
 
 def build_identify_crop_tool() -> BaseTool:
     """Factory pra ``identify_crop`` — sem deps externas (LLM e' instanciado dentro).
 
-    A factory permite mockar o LLM em testes via patch direto de ``ChatOpenAI``
+    A factory permite mockar o LLM em testes via patch de ``get_chat_model``
     dentro do modulo. O LLM concreto so' eh resolvido quando a tool e' chamada
     (lazy), o que evita tentar conectar com a API em import-time.
 
@@ -73,7 +73,7 @@ def build_identify_crop_tool() -> BaseTool:
             "Se confidence < 0.7, use 'desconhecido' como crop_id."
         )
 
-        vision_llm = get_chat_model(settings.vision_model, temperature=0)
+        vision_llm = get_chat_model(settings.vision_model)
         response = await vision_llm.ainvoke(
             [
                 HumanMessage(
@@ -91,9 +91,7 @@ def build_identify_crop_tool() -> BaseTool:
         )
 
         try:
-            raw_content = (
-                response.content if isinstance(response.content, str) else ""
-            )
+            raw_content = message_text(response)
             result = json.loads(raw_content)
             crop_id = result.get("crop_id", "desconhecido")
             confidence = float(result.get("confidence", 0.0))

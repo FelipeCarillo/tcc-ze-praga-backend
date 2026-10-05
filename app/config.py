@@ -13,6 +13,11 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        # Provider-agnóstico: credenciais de qualquer provider do LangChain
+        # (GOOGLE_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY, AWS_*...) podem estar
+        # no .env sem declaração aqui — o init_chat_model as lê de os.environ.
+        # Com o ``extra=forbid`` padrão, cada provider novo derrubava o boot.
+        extra="ignore",
     )
 
     # Database
@@ -33,18 +38,33 @@ class Settings(BaseSettings):
     chat_model: str = "openai:gpt-4o-mini"
     vision_model: str = "openai:gpt-4o"
 
+    # Quando ``False`` (padrão), TODOS os planos usam ``chat_model`` — trocar de
+    # modelo ou de provider é mudar uma variável de ambiente. Com ``True``, cada
+    # plano usa o ``llm_model`` gravado em ``subscription_plans.features``
+    # (Free=gpt-4o-mini, Pro/Enterprise=gpt-4o no seed).
+    llm_use_plan_models: bool = False
+
+    # Temperatura enviada ao provider. ``None`` (padrão) não envia o parâmetro:
+    # modelos de raciocínio (gpt-5, o-series) recusam ``temperature`` diferente
+    # do default, então fixar 0 aqui quebrava a troca de modelo.
+    llm_temperature: float | None = None
+
     # Limites do cliente LLM — sem isso o SDK pode pendurar/retentar muito além
     # do esperado (causa do timeout de 30s no 1º turno). Bound o pior caso e
     # troca um hang por um erro claro. Overridáveis via env.
     chat_timeout_seconds: int = 60
     chat_max_retries: int = 2
 
-    # OpenAI — ainda usado direto pra embeddings (ate hoje LangChain nao tem
-    # ``init_embeddings`` agnostico canonico). ``openai_api_key`` permanece
-    # legado pra outros caminhos; pra chat use ``OPENAI_API_KEY`` em ``.env``.
+    # Embeddings da memória semântica (pgvector) — também agnóstico, via
+    # ``langchain.embeddings.init_embeddings`` (ex: ``google_genai:...``).
+    # ``embeddings_dims`` precisa bater com o modelo; trocar de dimensão exige
+    # reindexar o Store. Sem prefixo, assume ``openai:`` (legado).
+    embeddings_model: str = "openai:text-embedding-3-small"
+    embeddings_dims: int = 1536
+
+    # OpenAI — a key também é lida de os.environ pelo LangChain; declarada aqui
+    # porque a transcrição de áudio usa o SDK da OpenAI direto.
     openai_api_key: str | None = None
-    openai_embeddings_model: str = "text-embedding-3-small"
-    openai_embeddings_dims: int = 1536
 
     # Transcrição de áudio (STT) — entrada de voz no chat (TCC-081).
     transcription_model: str = "whisper-1"

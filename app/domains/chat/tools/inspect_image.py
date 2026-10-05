@@ -20,7 +20,7 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
 from app.config import settings
-from app.core.llm import get_chat_model
+from app.core.llm import get_chat_model, message_text
 from app.domains.chat.agent_state import ChatState, resolve_image
 
 _PROMPT = (
@@ -75,7 +75,7 @@ def build_inspect_image_tool() -> BaseTool:
                 ensure_ascii=False,
             )
 
-        vision_llm = get_chat_model(settings.vision_model, temperature=0)
+        vision_llm = get_chat_model(settings.vision_model)
         try:
             response = await vision_llm.ainvoke(
                 [
@@ -93,7 +93,7 @@ def build_inspect_image_tool() -> BaseTool:
                     )
                 ]
             )
-            raw = response.content if isinstance(response.content, str) else ""
+            raw = message_text(response)
             data = json.loads(_strip_json_fence(raw))
             return json.dumps(
                 {

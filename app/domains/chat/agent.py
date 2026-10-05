@@ -137,8 +137,13 @@ def build_graph(
         Grafo compilado pronto pra `.ainvoke()` / `.astream_events()`.
     """
     if llm is None:
+        # Padrão: um modelo só (``CHAT_MODEL``) para todos os planos — trocar
+        # de modelo/provider é mudar o ambiente. O modelo por plano gravado no
+        # banco só vale com ``LLM_USE_PLAN_MODELS=true``.
         model_id = (
-            plan_features.llm_model if plan_features is not None else settings.chat_model
+            plan_features.llm_model
+            if plan_features is not None and settings.llm_use_plan_models
+            else settings.chat_model
         )
         llm = get_chat_model(model_id)
 

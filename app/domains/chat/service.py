@@ -807,13 +807,11 @@ class ChatService:
         """Pega o conteúdo do último AIMessage no histórico."""
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.content:
-                if isinstance(msg.content, str):
-                    return msg.content
-                # OpenAI as vezes manda content como list de parts
-                return "".join(
-                    part.get("text", "") if isinstance(part, dict) else str(part)
-                    for part in msg.content
-                )
+                # Anthropic/Gemini/Responses API mandam lista de blocos (com
+                # raciocínio e tool calls); message_text fica só com o texto.
+                from app.core.llm import message_text
+
+                return message_text(msg)
         return ""
 
     @staticmethod
@@ -920,7 +918,7 @@ class ChatService:
         Args:
             user_id: dono da sessao.
             session_id: id da sessao a fechar.
-            llm: LLM pra gerar o resumo. Quando ``None``, usa ChatOpenAI default.
+            llm: LLM pra gerar o resumo. Quando ``None``, usa ``settings.chat_model``.
         """
         session = await self._session_repo.get_by_id(session_id, user_id)
         if session is None:
@@ -983,10 +981,6 @@ class ChatService:
         response = await llm.ainvoke(
             [SystemMessage(content=prompt), *history]
         )
-        content = getattr(response, "content", "")
-        if isinstance(content, list):
-            content = "".join(
-                p.get("text", "") if isinstance(p, dict) else str(p)
-                for p in content
-            )
-        return content.strip() if isinstance(content, str) else str(content)
+        from app.core.llm import message_text
+
+        return message_text(response).strip()

@@ -127,14 +127,18 @@ try {
     # Migrations e seeds saem do boot (rode `docker run ... migrate` à parte):
     # cada cold start deixava de pagar ~10 s de alembic + seeds.
     if ($Perfil -eq 'enxuto') {
-        $recursos = @{ Memory = '2Gi'; Cpu = '1'; Timeout = '300' }
+        # --cpu-throttling: CPU só é cobrada durante a requisição (é o que
+        # mantém o uso dentro do free tier). --no-cpu-boost: o boost dobra a
+        # vCPU cobrada a cada cold start; troca uns segundos de subida por
+        # custo zero.
+        $recursos = @{ Memory = '2Gi'; Cpu = '1'; Timeout = '300'; Boost = '--no-cpu-boost' }
         $padroes = [ordered]@{
             INFERENCE_MODELS        = 'efficientnet_b4'
             CHAT_STREAMING_ENABLED  = 'false'
             RUN_MIGRATIONS_ON_BOOT  = 'false'
         }
     } else {
-        $recursos = @{ Memory = '4Gi'; Cpu = '2'; Timeout = '3600' }
+        $recursos = @{ Memory = '4Gi'; Cpu = '2'; Timeout = '3600'; Boost = '--cpu-boost' }
         $padroes = [ordered]@{
             INFERENCE_MODELS        = 'efficientnet_b4,resnet50,vit_b16'
             CHAT_STREAMING_ENABLED  = 'true'
@@ -173,6 +177,8 @@ try {
         --concurrency 4 `
         --min-instances 0 `
         --max-instances 2 `
+        --cpu-throttling `
+        $recursos.Boost `
         --timeout $recursos.Timeout `
         --quiet `
         --set-env-vars $envArg

@@ -9,7 +9,7 @@ grafo num thread_id (sessao); store persiste **memorias** indexadas por
 namespace (ex: ``("user", uid, "diagnoses")``).
 
 Indexacao: embeddings sao gerados pelo ``OpenAIEmbeddings`` configurado
-em ``settings.openai_embeddings_model`` (default ``text-embedding-3-small``,
+em ``settings.embeddings_model`` (default ``text-embedding-3-small``,
 1536 dims).
 
 Lifecycle: a coroutine ``get_store()`` retorna um singleton lazy-initialized.
@@ -55,15 +55,11 @@ def _make_conn_string() -> str:
 
 def _build_index_config() -> PostgresIndexConfig:
     """Constroi o ``PostgresIndexConfig`` pra vector search."""
-    from langchain_openai import OpenAIEmbeddings
-    from pydantic import SecretStr
+    from app.core.llm import get_embeddings
 
-    embeddings = OpenAIEmbeddings(
-        model=settings.openai_embeddings_model,
-        api_key=SecretStr(settings.openai_api_key) if settings.openai_api_key else None,
-    )
+    embeddings = get_embeddings(settings.embeddings_model)
     return {
-        "dims": settings.openai_embeddings_dims,
+        "dims": settings.embeddings_dims,
         "embed": embeddings,
         # Indexa todos os campos "summary_text" automaticamente — outros
         # campos do value sao armazenados sem embedding.
