@@ -28,6 +28,7 @@ router = APIRouter(prefix="/inference", tags=["Inference"])
 async def run_inference(
     image: UploadFile = File(...),
     model: str = Form(default=ModelEnum.ENSEMBLE),
+    talhao_id: str | None = Form(default=None),
     current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.INFERENCE)),
     diagnosis_svc: DiagnosisService = Depends(get_diagnosis_service),
     usage_svc: UsageService = Depends(get_usage_service),
@@ -70,6 +71,7 @@ async def run_inference(
         image_url=storage_key,
         image_name=result.image_name,
         top3=result.top3,
+        talhao_id=talhao_id or None,
     )
 
     crop_uuid = (

@@ -116,6 +116,7 @@ async def send_message(
     image: UploadFile | None = File(default=None),
     audio: UploadFile | None = File(default=None),
     session_id: str | None = Form(default=None),
+    talhao_id: str | None = Form(default=None),
     current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.CHAT)),
     chat_svc: ChatService = Depends(get_chat_service),
     usage_svc: UsageService = Depends(get_usage_service),
@@ -139,6 +140,7 @@ async def send_message(
         image_mime=image_mime,
         image_filename=image_filename,
         model_id=model,
+        talhao_id=talhao_id or None,
     )
     response.transcript = transcript
     return response
@@ -151,6 +153,7 @@ async def send_message_stream(
     image: UploadFile | None = File(default=None),
     audio: UploadFile | None = File(default=None),
     session_id: str | None = Form(default=None),
+    talhao_id: str | None = Form(default=None),
     current_user: UserDTO = Depends(require_quota(FeatureTypeEnum.CHAT)),
     chat_svc: ChatService = Depends(get_chat_service),
     usage_svc: UsageService = Depends(get_usage_service),
@@ -184,6 +187,7 @@ async def send_message_stream(
             image_mime=image_mime,
             image_filename=image_filename,
             model_id=model,
+            talhao_id=talhao_id or None,
         ):
             # sse-starlette espera dict {event, data}; data é serializado pra string.
             data = event.get("data", "")

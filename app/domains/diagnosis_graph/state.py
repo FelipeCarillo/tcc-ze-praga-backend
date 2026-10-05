@@ -38,6 +38,7 @@ class DiagnosisState(TypedDict, total=False):
     image_ids: list[str]
     model_id: str
     plan_features: dict[str, Any]  # TCC-055 — serializado das PlanFeatures (le no gather_evidence)
+    talhao_id: str | None  # TCC-093 — talhao dos laudos do lote (None = sem talhao)
 
     # ── opcional (caso o invocador queira propagar mensagens) ────────────────
     messages: Annotated[list[BaseMessage], add_messages]

@@ -30,3 +30,22 @@ class DiagnosisDTO:
     top3: list[Top3PredictionDTO] = field(default_factory=list)
     # TCC-056 — evidencia externa persistida em diagnoses.sources (JSONB).
     sources: list[dict[str, Any]] = field(default_factory=list)
+    # TCC-093 — talhao do laudo (None = "Sem talhao").
+    talhao_id: str | None = None
+    talhao_nome: str | None = None
+
+
+@dataclass(frozen=True)
+class TalhaoGroupDTO:
+    """Um grupo do historico agrupado por talhao (TCC-093).
+
+    ``talhao_id``/``talhao_nome`` None representam o grupo "Sem talhao".
+    ``recent`` traz os laudos mais recentes do grupo (ja limitados);
+    ``total`` conta todos.
+    """
+
+    talhao_id: str | None
+    talhao_nome: str | None
+    total: int
+    last_at: datetime | None
+    recent: list[DiagnosisDTO] = field(default_factory=list)

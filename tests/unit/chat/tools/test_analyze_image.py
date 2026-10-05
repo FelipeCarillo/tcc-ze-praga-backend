@@ -360,3 +360,43 @@ async def test_sem_upload_svc_o_diagnostico_fica_sem_imagem() -> None:
     )
 
     assert diagnosis.create.await_args.args[1].image_url is None
+
+
+async def test_analyze_image_grava_o_talhao_escolhido_na_ui() -> None:
+    """TCC-093: o talhao vem do estado (escolha da UI), nunca do LLM."""
+    inference, diagnosis = _services()
+    tool = build_analyze_image_tool(inference, diagnosis)
+    state = {
+        "uploaded_files": [_file()],
+        "current_user_id": "user-1",
+        "selected_model": "ensemble",
+        "selected_talhao_id": "talhao-sede",
+    }
+
+    await tool.ainvoke(
+        {
+            "name": "analyze_image",
+            "args": {"image_id": None, "state": state},
+            "id": "call-1",
+            "type": "tool_call",
+        }
+    )
+
+    assert diagnosis.create.await_args.args[1].talhao_id == "talhao-sede"
+
+
+async def test_analyze_image_sem_talhao_grava_none() -> None:
+    inference, diagnosis = _services()
+    tool = build_analyze_image_tool(inference, diagnosis)
+    state = {"uploaded_files": [_file()], "current_user_id": "user-1", "selected_model": "ensemble"}
+
+    await tool.ainvoke(
+        {
+            "name": "analyze_image",
+            "args": {"image_id": None, "state": state},
+            "id": "call-1",
+            "type": "tool_call",
+        }
+    )
+
+    assert diagnosis.create.await_args.args[1].talhao_id is None

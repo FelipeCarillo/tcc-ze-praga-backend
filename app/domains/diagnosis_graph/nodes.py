@@ -227,6 +227,7 @@ async def persist_node(
     predictions = state.get("predictions", [])
     model_id = state.get("model_id", "ensemble")
     user_id = state.get("user_id", "")
+    talhao_id = state.get("talhao_id")
     # ``Diagnosis.crop_id`` eh NOT NULL (migration 0004). Extrai o UUID do
     # catalogo carregado no ``InferenceService`` — em multi-cultivo o factory
     # ja garante que o svc esta amarrado ao crop alvo, entao todas as diseases
@@ -275,6 +276,7 @@ async def persist_node(
                 for t in pred.get("top3", [])
             ],
             sources=sources,
+            talhao_id=talhao_id,
         )
         diag = await diagnosis_svc.create(user_id, body, crop_id=crop_uuid)
         persisted.append(diag.id)
