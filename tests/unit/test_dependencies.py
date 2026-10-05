@@ -144,9 +144,21 @@ def test_get_action_plan_service():
     assert isinstance(result, ActionPlanService)
 
 
-async def test_get_inference_service():
-    """Agora async — recebe CropRepository/DiseaseRepository por DI."""
+async def test_get_inference_service(monkeypatch):
+    """Agora async — recebe CropRepository/DiseaseRepository por DI.
+
+    O registro de ONNX é simulado: o teste cobre a fiação do factory, não o
+    carregamento dos modelos (que vêm do Git LFS e não existem no checkout do
+    CI — ``test_onnx_classifier.py`` cobre o ONNX real quando ele está lá).
+    """
+    from app.core import dependencies
     from app.core.dependencies import get_inference_service
+
+    monkeypatch.setattr(
+        dependencies,
+        "_get_onnx_classifiers",
+        lambda: {k: MagicMock() for k in dependencies._configured_onnx_models()},
+    )
     from app.domains.inference.repository import (
         CropDTO,
         CropRepository,
@@ -318,3 +330,36 @@ def test_get_onnx_classifiers_carrega_so_os_configurados(monkeypatch):
 
     assert list(registro) == ["efficientnet_b4"]
     assert carregados == ["soja_efficientnet_b4.onnx"]
+
+
+async def test_get_inference_service_falha_quando_modelo_configurado_nao_carrega(
+    monkeypatch,
+):
+    """Modo real sem o ONNX configurado não pode cair em mock calado."""
+    from app.config import settings
+    from app.core import dependencies
+    from app.domains.inference.repository import CropDTO, CropRepository, DiseaseRepository
+
+    monkeypatch.setattr(settings, "inference_use_onnx", True)
+    monkeypatch.setattr(settings, "inference_models", "efficientnet_b4,resnet50")
+    monkeypatch.setattr(
+        dependencies, "_get_onnx_classifiers", lambda: {"efficientnet_b4": MagicMock()}
+    )
+    crop_repo = MagicMock(spec=CropRepository)
+    crop_repo.get_by_slug = AsyncMock(
+        return_value=CropDTO(
+            id="soja-id",
+            slug="soja",
+            name_pt="Soja",
+            scientific_name="Glycine max",
+            kingdom="Plantae",
+            is_active=True,
+        )
+    )
+    disease_repo = MagicMock(spec=DiseaseRepository)
+    disease_repo.list_by_crop = AsyncMock(return_value=[])
+
+    with pytest.raises(RuntimeError, match="resnet50"):
+        await dependencies.get_inference_service(
+            crop_repo=crop_repo, disease_repo=disease_repo
+        )
