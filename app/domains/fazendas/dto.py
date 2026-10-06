@@ -1,15 +1,15 @@
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 
 
 @dataclass(frozen=True)
-class TalhaoDTO:
+class FazendaDTO:
     id: str
     user_id: str
-    fazenda_id: str
     nome: str
-    apelido: str | None
+    municipio: str | None
+    uf: str | None
     hectares: float | None
-    cultura: str
-    data_semeadura: date | None
+    agronomo_nome: str | None
+    agronomo_crea: str | None
     created_at: datetime

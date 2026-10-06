@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from app.domains.chat.dto import ChatMessageDTO, ChatSessionDTO
+from app.domains.chat.dto import SessionPreviewDTO, ChatMessageDTO, ChatSessionDTO
 from app.domains.chat.service import ChatService
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
@@ -53,8 +53,8 @@ async def test_lista_sessoes_com_previa_e_contagem() -> None:
     session_repo = AsyncMock()
     session_repo.list_with_preview = AsyncMock(
         return_value=[
-            (_session("s1", summary="Falamos de ferrugem."), 6, "olha essa folha"),
-            (_session("s2"), 2, "e essa aqui?"),
+            SessionPreviewDTO(_session("s1", summary="Falamos de ferrugem."), 6, "olha essa folha"),
+            SessionPreviewDTO(_session("s2"), 2, "e essa aqui?"),
         ]
     )
     svc = _svc(session_repo)
@@ -66,6 +66,53 @@ async def test_lista_sessoes_com_previa_e_contagem() -> None:
     assert sessions[0].message_count == 6
     assert sessions[0].summary_text == "Falamos de ferrugem."
     session_repo.list_with_preview.assert_awaited_once_with("user-1", limit=50)
+
+
+async def test_lista_sessoes_com_resposta_laudos_foto_e_talhao() -> None:
+    """TCC-097: o card de Conversas traz a resposta do Ze e o ultimo laudo."""
+    session_repo = AsyncMock()
+    session_repo.list_with_preview = AsyncMock(
+        return_value=[
+            SessionPreviewDTO(
+                _session("s1"),
+                4,
+                "folhas amarelando",
+                last_reply="**Ferrugem-asiatica**, risco alto.\n\nQuer o plano?",
+                diagnosis_count=2,
+                image_key="users/u/folha.jpg",
+                talhao_nome="Sede",
+            ),
+            SessionPreviewDTO(_session("s2"), 2, "o que e mildio?", last_reply="x" * 400),
+        ]
+    )
+    upload = MagicMock()
+    upload.signed_urls = MagicMock(return_value={"users/u/folha.jpg": "https://cdn/folha.jpg"})
+    svc = _svc(session_repo)
+    svc._upload_svc = upload
+
+    first, second = await svc.list_sessions("user-1")
+
+    assert first.last_reply == "Ferrugem-asiatica, risco alto. Quer o plano?"
+    assert first.diagnosis_count == 2
+    assert first.image_url == "https://cdn/folha.jpg"
+    assert first.talhao_nome == "Sede"
+    assert second.image_url is None and len(second.last_reply) == 160
+    upload.signed_urls.assert_called_once_with(["users/u/folha.jpg"])
+
+
+async def test_lista_sessoes_sem_assinar_miniatura_segue() -> None:
+    session_repo = AsyncMock()
+    session_repo.list_with_preview = AsyncMock(
+        return_value=[SessionPreviewDTO(_session("s1"), 2, "oi", image_key="k")]
+    )
+    upload = MagicMock()
+    upload.signed_urls = MagicMock(side_effect=RuntimeError("storage fora"))
+    svc = _svc(session_repo)
+    svc._upload_svc = upload
+
+    (only,) = await svc.list_sessions("user-1")
+
+    assert only.image_url is None and only.preview == "oi"
 
 
 async def test_mensagens_da_sessao_em_ordem() -> None:

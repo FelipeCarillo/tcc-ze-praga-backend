@@ -22,6 +22,7 @@ from app.domains.diagnoses.repository import DiagnosisRepository
 from app.domains.diagnoses.schemas import CreateDiagnosisRequest, DiagnosisFilters
 from app.models.crop import Crop
 from app.models.diagnosis import Diagnosis
+from app.models.fazenda import Fazenda
 from app.models.talhao import Talhao
 from app.models.user import User
 from app.shared.enums import SeverityEnum
@@ -48,9 +49,13 @@ async def mundo(session):
     b = User(email=f"b-{tag}@t.test", password_hash="x")
     session.add_all([crop, a, b])
     await session.flush()
-    sede = Talhao(user_id=a.id, nome="Sede")
-    baixada = Talhao(user_id=a.id, nome="Baixada")
-    alheio = Talhao(user_id=b.id, nome="Do vizinho")
+    faz_a = Fazenda(user_id=a.id, nome="Boa Vista")
+    faz_b = Fazenda(user_id=b.id, nome="Vizinha")
+    session.add_all([faz_a, faz_b])
+    await session.flush()
+    sede = Talhao(user_id=a.id, fazenda_id=faz_a.id, nome="Sede")
+    baixada = Talhao(user_id=a.id, fazenda_id=faz_a.id, nome="Baixada")
+    alheio = Talhao(user_id=b.id, fazenda_id=faz_b.id, nome="Do vizinho")
     session.add_all([sede, baixada, alheio])
     await session.commit()
     return {"crop": crop.id, "a": a.id, "b": b.id, "sede": sede.id,
@@ -96,6 +101,9 @@ async def test_grupos_por_talhao_com_os_mais_recentes(session, mundo):
     assert all(d.talhao_nome == "Sede" for d in sede.recent)
     assert baixada.total == 0 and baixada.recent == [] and baixada.last_at is None
     assert sem.total == 1 and sem.recent[0].talhao_id is None
+    # TCC-096: cada grupo traz a fazenda do talhao; o "Sem talhao" nao tem.
+    assert sede.fazenda_nome == "Boa Vista" and baixada.fazenda_nome == "Boa Vista"
+    assert sem.fazenda_id is None
     # Nada do usuario B vaza para A.
     assert all(d.user_id == a for g in groups for d in g.recent)
 

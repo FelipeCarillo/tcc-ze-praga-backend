@@ -247,10 +247,27 @@ def get_talhao_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[n
     return TalhaoRepository(db)
 
 
-def get_talhao_service(repo=Depends(get_talhao_repository)):  # type: ignore[no-untyped-def]
+def get_fazenda_repository(db: AsyncSession = Depends(get_db)):  # type: ignore[no-untyped-def]
+    from app.domains.fazendas.repository import FazendaRepository
+
+    return FazendaRepository(db)
+
+
+def get_talhao_service(  # type: ignore[no-untyped-def]
+    repo=Depends(get_talhao_repository), fazenda_repo=Depends(get_fazenda_repository)
+):
     from app.domains.talhoes.service import TalhaoService
 
-    return TalhaoService(repo)
+    return TalhaoService(repo, fazenda_repo)
+
+
+def get_fazenda_service(  # type: ignore[no-untyped-def]
+    repo=Depends(get_fazenda_repository), talhao_repo=Depends(get_talhao_repository)
+):
+    """TCC-096: fazendas com os talhões aninhados."""
+    from app.domains.fazendas.service import FazendaService
+
+    return FazendaService(repo, talhao_repo)
 
 
 # Registro multi-modelo (TCC-095): cada chave canônica → (path relativo, input_size).
@@ -427,6 +444,29 @@ def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]
         return graph
 
     return _factory
+
+
+def get_chat_history_service(  # type: ignore[no-untyped-def]
+    session_repo=Depends(get_chat_session_repository),
+    message_repo=Depends(get_chat_message_repository),
+    upload_svc=Depends(get_upload_service),
+):
+    """ChatService so' de leitura do historico (lista e mensagens).
+
+    Listar conversas nao roda agente nem inferencia: sem isto, ``GET /sessions``
+    montava o ChatService inteiro e falhava onde os modelos ONNX nao estao
+    carregados (o InferenceService exige os modelos no modo real).
+    """
+    from app.domains.chat.service import ChatService
+
+    return ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=None,  # type: ignore[arg-type]
+        action_plan_svc=None,  # type: ignore[arg-type]
+        diagnosis_svc=None,  # type: ignore[arg-type]
+        upload_svc=upload_svc,
+    )
 
 
 def get_chat_service(  # type: ignore[no-untyped-def]

@@ -9,6 +9,7 @@ from app.models.diagnosis import Diagnosis
 from app.models.diagnosis_top3 import DiagnosisTop3
 from app.models.disease import Disease
 from app.models.email_verification_token import EmailVerificationToken
+from app.models.fazenda import Fazenda
 from app.models.password_reset_token import PasswordResetToken
 from app.models.subscription_plan import SubscriptionPlan
 from app.models.talhao import Talhao
@@ -27,6 +28,7 @@ __all__ = [
     "ChatSession",
     "ChatMessage",
     "SubscriptionPlan",
+    "Fazenda",
     "Talhao",
     "UserSubscription",
     "UsageLog",

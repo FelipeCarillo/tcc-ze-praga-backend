@@ -129,6 +129,34 @@ def get_registry() -> list[ToolConfig]:
                 "Busca diagnosticos passados (sera semantico em A2.5)."
             ),
         ),
+        # TCC-098: o Ze pergunta e cadastra talhao na conversa.
+        ToolConfig(
+            name="list_my_talhoes",
+            version=1,
+            factory_key="list_my_talhoes",
+            enabled_globally=True,
+            required_feature=None,
+            min_tier=None,
+            description="Fazendas e talhoes do usuario (e o talhao ja escolhido).",
+        ),
+        ToolConfig(
+            name="use_talhao",
+            version=1,
+            factory_key="use_talhao",
+            enabled_globally=True,
+            required_feature=None,
+            min_tier=None,
+            description="Escolhe um talhao existente para os laudos do turno.",
+        ),
+        ToolConfig(
+            name="register_talhao",
+            version=1,
+            factory_key="register_talhao",
+            enabled_globally=True,
+            required_feature=None,
+            min_tier=None,
+            description="Cadastra um talhao descrito na conversa e o escolhe.",
+        ),
         ToolConfig(
             name="ask_user",
             version=1,

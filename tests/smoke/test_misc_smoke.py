@@ -33,6 +33,7 @@ API = "/api/v1"
 def _make_talhao_response(**kwargs) -> TalhaoResponse:
     defaults = dict(
         id="talhao-uuid-1",
+        fazenda_id="fazenda-uuid-1",
         nome="Talhao Norte",
         apelido="Norte",
         hectares=42.5,

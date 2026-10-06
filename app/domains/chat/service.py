@@ -44,6 +44,7 @@ from app.domains.chat.schemas import (
     CloseSessionResponse,
     InterruptInfo,
     PendingInterrupt,
+    TalhaoSelectedInfo,
 )
 from app.domains.chat.tool_registry import build_tools
 from app.domains.diagnoses.schemas import DiagnosisResponse
@@ -62,6 +63,14 @@ if TYPE_CHECKING:
     from app.domains.uploads.service import UploadService
 
 logger = logging.getLogger(__name__)
+
+
+def _trim(text: str | None, limit: int = 160) -> str | None:
+    """Uma linha curta da resposta para o card da lista (sem markdown pesado)."""
+    if not text:
+        return None
+    flat = " ".join(text.replace("*", "").replace("#", "").split())
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
 class ChatService:
@@ -191,6 +200,12 @@ class ChatService:
                 _subgraph_for
             )
 
+        # TCC-098: o agente pergunta/cria o talhao — precisa do banco.
+        if self._db_session_factory is not None:
+            from app.domains.chat.tools.talhoes import build_talhao_tools
+
+            factories.update(build_talhao_tools(self._db_session_factory))
+
         return factories
 
     async def _get_graph(self, plan_features: PlanFeatures | None = None) -> Any:
@@ -299,6 +314,7 @@ class ChatService:
                 "current_session_id": session.id,
                 "selected_model": model_id,
                 "selected_talhao_id": talhao_id,
+                "talhao_selected": None,
                 "plan_features": plan_features,
                 "uploaded_files": uploaded_files,
                 "diagnoses_in_turn": [],
@@ -333,6 +349,7 @@ class ChatService:
             content=assistant_text,
             diagnosis=diagnosis,
             session_id=session.id,
+            talhao=self._talhao_from(result),
         )
 
     async def chat_stream(
@@ -384,6 +401,7 @@ class ChatService:
             "current_session_id": session.id,
             "selected_model": model_id,
             "selected_talhao_id": talhao_id,
+            "talhao_selected": None,
             "plan_features": plan_features,
             "uploaded_files": uploaded_files,
             "diagnoses_in_turn": [],
@@ -432,6 +450,10 @@ class ChatService:
                 # Fallback: ChatModel pode não ter emitido tokens streamados (FakeLLM,
                 # erro de streaming, etc). A resposta já está no checkpoint.
                 assistant_text = await self._final_text_from_snapshot(graph, config)
+
+            talhao = await self._talhao_from_snapshot(graph, config)
+            if talhao is not None:
+                yield {"event": "talhao", "data": talhao.model_dump_json()}
 
             # Se o agente diagnosticou via analyze_image, o id ficou em
             # ``diagnoses_in_turn`` no snapshot — carrega e emite o evento.
@@ -494,6 +516,7 @@ class ChatService:
             metadata={"resume": True},
         )
 
+        before = await self._turn_values(graph, config)
         result = await graph.ainvoke(Command(resume=response), config=config)
 
         interrupt_info = self._extract_interrupt_from_result(result)
@@ -505,16 +528,29 @@ class ChatService:
                 interrupt=interrupt_info,
             )
 
+        # TCC-098: quando a pergunta (ex. o talhao) veio ANTES da analise, o
+        # laudo nasce no resume — so' o que e' novo vai na resposta.
+        diagnosis = None
+        if self._new_in_resume(before, result, "diagnoses_in_turn"):
+            diagnosis = await self._diagnosis_from_state(result, user_id)
+        talhao = (
+            self._talhao_from(result)
+            if self._new_in_resume(before, result, "talhao_selected")
+            else None
+        )
         assistant_text = self._extract_final_text(result["messages"])
         await self._message_repo.create(
             session_id=thread_id,
             role="assistant",
             content=assistant_text,
+            diagnosis_id=diagnosis.id if diagnosis else None,
         )
         return ChatResponse(
             role="assistant",
             content=assistant_text,
+            diagnosis=diagnosis,
             session_id=thread_id,
+            talhao=talhao,
         )
 
     async def resume_stream(
@@ -537,6 +573,7 @@ class ChatService:
             metadata={"resume": True},
         )
 
+        before = await self._turn_values(graph, config)
         collected_chunks: list[str] = []
         try:
             async for event in graph.astream_events(
@@ -572,10 +609,22 @@ class ChatService:
             if not assistant_text:
                 assistant_text = await self._final_text_from_snapshot(graph, config)
 
+            after = await self._turn_values(graph, config)
+            if self._new_in_resume(before, after, "talhao_selected"):
+                talhao = self._talhao_from(after)
+                if talhao is not None:
+                    yield {"event": "talhao", "data": talhao.model_dump_json()}
+            diagnosis = None
+            if self._new_in_resume(before, after, "diagnoses_in_turn"):
+                diagnosis = await self._diagnosis_from_state(after, user_id)
+                if diagnosis is not None:
+                    yield {"event": "diagnosis", "data": diagnosis.model_dump_json()}
+
             await self._message_repo.create(
                 session_id=thread_id,
                 role="assistant",
                 content=assistant_text,
+                diagnosis_id=diagnosis.id if diagnosis else None,
             )
         except Exception:
             logger.exception("resume_stream falhou (thread=%s)", thread_id)
@@ -755,6 +804,39 @@ class ChatService:
         base = (message_text or "").strip()
         return f"{base}\n\n{note}" if base else note
 
+    @staticmethod
+    def _talhao_from(values: Any) -> TalhaoSelectedInfo | None:
+        """Talhao escolhido/criado pelo agente no turno (TCC-098)."""
+        raw = values.get("talhao_selected") if isinstance(values, dict) else None
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return TalhaoSelectedInfo(**raw)
+        except Exception:  # noqa: BLE001
+            logger.warning("talhao_selected invalido no estado: %r", raw)
+            return None
+
+    async def _talhao_from_snapshot(
+        self, graph: Any, config: dict[str, Any]
+    ) -> TalhaoSelectedInfo | None:
+        return self._talhao_from(await self._turn_values(graph, config))
+
+    @staticmethod
+    async def _turn_values(graph: Any, config: dict[str, Any]) -> dict[str, Any]:
+        """Valores do snapshot do turno; vazio se o checkpointer falhar."""
+        try:
+            snapshot = await graph.aget_state(config)
+        except Exception:  # noqa: BLE001
+            return {}
+        values = getattr(snapshot, "values", None) if snapshot else None
+        return values if isinstance(values, dict) else {}
+
+    @staticmethod
+    def _new_in_resume(before: dict[str, Any], after: Any, key: str) -> bool:
+        """O resume produziu ``key`` novo (nao herdado de antes da pergunta)?"""
+        value = after.get(key) if isinstance(after, dict) else None
+        return bool(value) and value != before.get(key)
+
     async def _diagnosis_from_state(
         self, result: Any, user_id: str
     ) -> DiagnosisResponse | None:
@@ -869,17 +951,29 @@ class ChatService:
         de leitura e o frontend nao tinha como voltar numa conversa.
         """
         rows = await self._session_repo.list_with_preview(user_id, limit=limit)
+        # A foto do card: storage key -> URL assinada, em lote (um round-trip).
+        keys = [r.image_key for r in rows if r.image_key]
+        urls: dict[str, str] = {}
+        if keys and self._upload_svc is not None:
+            try:
+                urls = self._upload_svc.signed_urls(keys)
+            except Exception:  # noqa: BLE001 — sem miniatura a lista segue util
+                logger.warning("Falha ao assinar miniaturas das conversas", exc_info=True)
         return [
             ChatSessionSummary(
-                id=sess.id,
-                title=sess.title,
-                preview=preview,
-                message_count=count,
-                summary_text=sess.summary_text,
-                created_at=sess.created_at,
-                updated_at=sess.updated_at,
+                id=r.session.id,
+                title=r.session.title,
+                preview=r.preview,
+                message_count=r.message_count,
+                summary_text=r.session.summary_text,
+                created_at=r.session.created_at,
+                updated_at=r.session.updated_at,
+                last_reply=_trim(r.last_reply),
+                diagnosis_count=r.diagnosis_count,
+                image_url=urls.get(r.image_key) if r.image_key else None,
+                talhao_nome=r.talhao_nome,
             )
-            for sess, count, preview in rows
+            for r in rows
         ]
 
     async def get_session_messages(

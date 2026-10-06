@@ -24,6 +24,7 @@ from app.domains.auth.router import router as auth_router
 from app.domains.chat.router import router as chat_router
 from app.domains.chat.router import sessions_router as chat_sessions_router
 from app.domains.diagnoses.router import router as diagnoses_router
+from app.domains.fazendas.router import router as fazendas_router
 from app.domains.inference.router import router as inference_router
 from app.domains.subscriptions.router import router as subscriptions_router
 from app.domains.talhoes.router import router as talhoes_router
@@ -160,6 +161,7 @@ app.include_router(chat_router, prefix=API_PREFIX)
 app.include_router(chat_sessions_router, prefix=API_PREFIX)
 app.include_router(action_plans_router, prefix=API_PREFIX)
 app.include_router(subscriptions_router, prefix=API_PREFIX)
+app.include_router(fazendas_router, prefix=API_PREFIX)
 app.include_router(talhoes_router, prefix=API_PREFIX)
 app.include_router(uploads_router, prefix=API_PREFIX)
 app.include_router(usage_router, prefix=API_PREFIX)
