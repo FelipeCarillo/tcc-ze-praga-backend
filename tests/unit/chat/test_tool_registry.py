@@ -31,6 +31,9 @@ _BASE_TOOL_NAMES = [
     "get_disease_info",
     "get_action_plan",
     "search_my_diagnoses",
+    "list_my_talhoes",
+    "use_talhao",
+    "register_talhao",
     "ask_user",
 ]
 
@@ -295,7 +298,7 @@ def test_tool_config_is_frozen() -> None:
 
 
 def test_default_registry_has_all_tools_post_a4_a4_5() -> None:
-    """Smoke-test do registry: 10 v1 + 1 v2 (identify_crop).
+    """Smoke-test do registry: 13 v1 + 1 v2 (identify_crop).
 
     ``inspect_image`` e ``analyze_image`` (TCC-079) entraram no registry quando o
     ``ChatService`` passou a montar as tools por aqui em vez de usar uma lista
@@ -310,6 +313,9 @@ def test_default_registry_has_all_tools_post_a4_a4_5() -> None:
         "get_disease_info",
         "get_action_plan",
         "search_my_diagnoses",
+        "list_my_talhoes",
+        "use_talhao",
+        "register_talhao",
         "ask_user",
         "compare_diagnoses",
         "search_web",
@@ -318,7 +324,7 @@ def test_default_registry_has_all_tools_post_a4_a4_5() -> None:
     }
     v1_cfgs = [c for c in cfgs if c.version == 1]
     v2_cfgs = [c for c in cfgs if c.version == 2]
-    assert len(v1_cfgs) == 10
+    assert len(v1_cfgs) == 13
     assert len(v2_cfgs) == 1
     by_name = {c.name: c for c in cfgs}
     base_tools = {"deep_diagnose", "get_disease_info", "get_action_plan", "search_my_diagnoses"}

@@ -86,6 +86,9 @@ class ChatState(TypedDict, total=False):
 
     # progressivo
     diagnoses_in_turn: list[str]  # ids criados neste turno
+    # TCC-098: talhao escolhido/criado pelo agente neste turno — a UI torna
+    # ativo e, se ``created``, mostra o cartao "Talhao criado".
+    talhao_selected: dict[str, Any] | None
     pending_interrupt: dict[str, Any] | None
 
 

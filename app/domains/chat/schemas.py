@@ -15,6 +15,19 @@ class InterruptInfo(BaseModel):
     asked_at: str | None = None
 
 
+class TalhaoSelectedInfo(BaseModel):
+    """Talhao escolhido ou criado pelo agente no turno (TCC-098)."""
+
+    id: str
+    nome: str
+    apelido: str | None = None
+    hectares: float | None = None
+    data_semeadura: str | None = None
+    fazenda_id: str | None = None
+    fazenda_nome: str | None = None
+    created: bool = False
+
+
 class ChatResponse(BaseModel):
     role: str = "assistant"
     content: str
@@ -27,6 +40,8 @@ class ChatResponse(BaseModel):
     # o payload do interrupt e o cliente deve renderizar o dialog +
     # disparar POST /chat/resume com a resposta.
     interrupt: InterruptInfo | None = None
+    # TCC-098: talhao escolhido/criado pelo agente neste turno.
+    talhao: TalhaoSelectedInfo | None = None
 
 
 class ChatSessionSummary(BaseModel):
