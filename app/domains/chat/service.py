@@ -64,6 +64,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _trim(text: str | None, limit: int = 160) -> str | None:
+    """Uma linha curta da resposta para o card da lista (sem markdown pesado)."""
+    if not text:
+        return None
+    flat = " ".join(text.replace("*", "").replace("#", "").split())
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
 class ChatService:
     def __init__(
         self,
@@ -869,17 +877,29 @@ class ChatService:
         de leitura e o frontend nao tinha como voltar numa conversa.
         """
         rows = await self._session_repo.list_with_preview(user_id, limit=limit)
+        # A foto do card: storage key -> URL assinada, em lote (um round-trip).
+        keys = [r.image_key for r in rows if r.image_key]
+        urls: dict[str, str] = {}
+        if keys and self._upload_svc is not None:
+            try:
+                urls = self._upload_svc.signed_urls(keys)
+            except Exception:  # noqa: BLE001 — sem miniatura a lista segue util
+                logger.warning("Falha ao assinar miniaturas das conversas", exc_info=True)
         return [
             ChatSessionSummary(
-                id=sess.id,
-                title=sess.title,
-                preview=preview,
-                message_count=count,
-                summary_text=sess.summary_text,
-                created_at=sess.created_at,
-                updated_at=sess.updated_at,
+                id=r.session.id,
+                title=r.session.title,
+                preview=r.preview,
+                message_count=r.message_count,
+                summary_text=r.session.summary_text,
+                created_at=r.session.created_at,
+                updated_at=r.session.updated_at,
+                last_reply=_trim(r.last_reply),
+                diagnosis_count=r.diagnosis_count,
+                image_url=urls.get(r.image_key) if r.image_key else None,
+                talhao_nome=r.talhao_nome,
             )
-            for sess, count, preview in rows
+            for r in rows
         ]
 
     async def get_session_messages(

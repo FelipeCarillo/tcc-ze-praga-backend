@@ -9,9 +9,11 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.chat.dto import ChatMessageDTO, ChatSessionDTO
+from app.domains.chat.dto import ChatMessageDTO, ChatSessionDTO, SessionPreviewDTO
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
+from app.models.diagnosis import Diagnosis
+from app.models.talhao import Talhao
 
 
 class ChatSessionRepository:
@@ -54,7 +56,7 @@ class ChatSessionRepository:
 
     async def list_with_preview(
         self, user_id: str, limit: int = 50
-    ) -> list[tuple[ChatSessionDTO, int, str | None]]:
+    ) -> list[SessionPreviewDTO]:
         """Sessoes do usuario com contagem de mensagens e previa da primeira.
 
         Sessoes vazias sao filtradas: ``get_or_create_for_user`` cria uma linha
@@ -64,9 +66,11 @@ class ChatSessionRepository:
         Uma query so' (agregacao + lateral) — a alternativa seria N+1 pra contar
         e prever cada sessao.
 
+        TCC-097: tambem a ultima resposta do Ze, o numero de laudos e a foto
+        e o talhao do laudo mais recente da conversa — o card de "Conversas".
+
         Returns:
-            Lista de ``(sessao, total_de_mensagens, previa)`` ordenada por
-            ``updated_at`` desc.
+            ``SessionPreviewDTO`` por sessao, ordenados por ``updated_at`` desc.
         """
         first_user_msg = (
             select(ChatMessage.content)
@@ -84,15 +88,70 @@ class ChatSessionRepository:
             .scalar_subquery()
         )
 
+        last_reply = (
+            select(ChatMessage.content)
+            .where(
+                ChatMessage.session_id == ChatSession.id,
+                ChatMessage.role == "assistant",
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        diagnosis_count = (
+            select(func.count(func.distinct(ChatMessage.diagnosis_id)))
+            .where(
+                ChatMessage.session_id == ChatSession.id,
+                ChatMessage.diagnosis_id.is_not(None),
+            )
+            .scalar_subquery()
+        )
+        # Foto e talhao do laudo MAIS RECENTE da conversa (talhao None se o
+        # ultimo laudo nao tem talhao — outer join).
+        image_key = (
+            select(Diagnosis.image_url)
+            .join(ChatMessage, ChatMessage.diagnosis_id == Diagnosis.id)
+            .where(ChatMessage.session_id == ChatSession.id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+        talhao_nome = (
+            select(Talhao.nome)
+            .select_from(ChatMessage)
+            .join(Diagnosis, ChatMessage.diagnosis_id == Diagnosis.id)
+            .outerjoin(Talhao, Talhao.id == Diagnosis.talhao_id)
+            .where(ChatMessage.session_id == ChatSession.id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
+
         result = await self._db.execute(
-            select(ChatSession, message_count, first_user_msg)
+            select(
+                ChatSession,
+                message_count,
+                first_user_msg,
+                last_reply,
+                diagnosis_count,
+                image_key,
+                talhao_nome,
+            )
             .where(ChatSession.user_id == user_id)
             .order_by(ChatSession.updated_at.desc())
             .limit(limit)
         )
         return [
-            (self._to_dto(session), int(count or 0), preview)
-            for session, count, preview in result.all()
+            SessionPreviewDTO(
+                session=self._to_dto(session),
+                message_count=int(count or 0),
+                preview=preview,
+                last_reply=reply,
+                diagnosis_count=int(n_diag or 0),
+                image_key=image,
+                talhao_nome=talhao,
+            )
+            for session, count, preview, reply, n_diag, image, talhao in result.all()
             if (count or 0) > 0
         ]
 

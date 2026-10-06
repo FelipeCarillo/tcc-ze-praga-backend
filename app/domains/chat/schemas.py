@@ -41,6 +41,11 @@ class ChatSessionSummary(BaseModel):
     preview: str | None = None
     message_count: int = 0
     summary_text: str | None = None
+    # TCC-097: o card de "Conversas" no historico.
+    last_reply: str | None = None
+    diagnosis_count: int = 0
+    image_url: str | None = None
+    talhao_nome: str | None = None
     created_at: datetime
     updated_at: datetime
 
