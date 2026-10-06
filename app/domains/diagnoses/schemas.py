@@ -82,6 +82,8 @@ class TalhaoGroupResponse(BaseModel):
 
     talhao_id: str | None
     talhao_nome: str | None
+    fazenda_id: str | None = None
+    fazenda_nome: str | None = None
     total: int
     last_at: datetime | None
     # Severidades do mais antigo pro mais recente entre os laudos de ``recent``

@@ -12,6 +12,8 @@ class Talhao(Base):
 
     Registro simples por usuário — usado no Perfil e para agrupar os
     diagnósticos por área no histórico (``diagnoses.talhao_id``, TCC-093).
+    Pertence a uma fazenda (``fazenda_id``, TCC-096): apagar a fazenda apaga
+    os talhões dela, e os laudos ficam sem talhão (ON DELETE SET NULL).
     """
 
     __tablename__ = "talhoes"
@@ -19,6 +21,9 @@ class Talhao(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    fazenda_id: Mapped[str] = mapped_column(
+        String, ForeignKey("fazendas.id", ondelete="CASCADE"), nullable=False, index=True
     )
     nome: Mapped[str] = mapped_column(String, nullable=False)
     apelido: Mapped[str | None] = mapped_column(String, nullable=True)

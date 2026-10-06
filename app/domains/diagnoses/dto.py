@@ -49,3 +49,6 @@ class TalhaoGroupDTO:
     total: int
     last_at: datetime | None
     recent: list[DiagnosisDTO] = field(default_factory=list)
+    # TCC-096: a fazenda do talhao (None no grupo "Sem talhao").
+    fazenda_id: str | None = None
+    fazenda_nome: str | None = None

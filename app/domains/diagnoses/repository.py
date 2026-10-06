@@ -10,6 +10,7 @@ from app.domains.diagnoses.schemas import (
 )
 from app.models.diagnosis import Diagnosis
 from app.models.diagnosis_top3 import DiagnosisTop3
+from app.models.fazenda import Fazenda
 from app.models.talhao import Talhao
 
 
@@ -183,17 +184,21 @@ class DiagnosisRepository:
 
         talhoes = (
             await self._db.execute(
-                select(Talhao.id, Talhao.nome).where(Talhao.user_id == user_id)
+                select(Talhao.id, Talhao.nome, Fazenda.id, Fazenda.nome)
+                .join(Fazenda, Fazenda.id == Talhao.fazenda_id)
+                .where(Talhao.user_id == user_id)
             )
         ).all()
 
         groups: list[TalhaoGroupDTO] = []
-        for talhao_id, nome in talhoes:
+        for talhao_id, nome, fazenda_id, fazenda_nome in talhoes:
             total, last_at = stats.get(talhao_id, (0, None))
             groups.append(
                 TalhaoGroupDTO(
                     talhao_id=talhao_id,
                     talhao_nome=nome,
+                    fazenda_id=fazenda_id,
+                    fazenda_nome=fazenda_nome,
                     total=total,
                     last_at=last_at,
                     recent=recent_by_group.get(talhao_id, []),

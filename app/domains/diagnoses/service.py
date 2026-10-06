@@ -129,6 +129,8 @@ class DiagnosisService:
         return TalhaoGroupResponse(
             talhao_id=g.talhao_id,
             talhao_nome=g.talhao_nome,
+            fazenda_id=g.fazenda_id,
+            fazenda_nome=g.fazenda_nome,
             total=g.total,
             last_at=g.last_at,
             # ``recent`` vem do mais novo pro mais antigo; a tendencia le ao

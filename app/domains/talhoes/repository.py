@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.talhoes.dto import TalhaoDTO
-from app.domains.talhoes.schemas import CreateTalhaoRequest
+from app.domains.talhoes.schemas import CreateTalhaoRequest, UpdateTalhaoRequest
 from app.models.talhao import Talhao
 
 
@@ -10,9 +10,10 @@ class TalhaoRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
-    async def create(self, user_id: str, data: CreateTalhaoRequest) -> TalhaoDTO:
+    async def create(self, user_id: str, fazenda_id: str, data: CreateTalhaoRequest) -> TalhaoDTO:
         talhao = Talhao(
             user_id=user_id,
+            fazenda_id=fazenda_id,
             nome=data.nome,
             apelido=data.apelido,
             hectares=data.hectares,
@@ -30,29 +31,50 @@ class TalhaoRepository:
         )
         return [self._to_dto(t) for t in result.scalars().all()]
 
-    async def find_by_id(self, talhao_id: str, user_id: str) -> TalhaoDTO | None:
+    async def find_all_by_fazenda(self, fazenda_id: str, user_id: str) -> list[TalhaoDTO]:
         result = await self._db.execute(
-            select(Talhao).where(Talhao.id == talhao_id, Talhao.user_id == user_id)
+            select(Talhao)
+            .where(Talhao.fazenda_id == fazenda_id, Talhao.user_id == user_id)
+            .order_by(Talhao.created_at.desc())
         )
-        talhao = result.scalar_one_or_none()
+        return [self._to_dto(t) for t in result.scalars().all()]
+
+    async def find_by_id(self, talhao_id: str, user_id: str) -> TalhaoDTO | None:
+        talhao = await self._get(talhao_id, user_id)
         return self._to_dto(talhao) if talhao else None
 
+    async def update(
+        self, talhao_id: str, user_id: str, data: UpdateTalhaoRequest
+    ) -> TalhaoDTO | None:
+        talhao = await self._get(talhao_id, user_id)
+        if not talhao:
+            return None
+        for campo, valor in data.model_dump(exclude_unset=True).items():
+            setattr(talhao, campo, valor)
+        await self._db.commit()
+        await self._db.refresh(talhao)
+        return self._to_dto(talhao)
+
     async def delete(self, talhao_id: str, user_id: str) -> bool:
-        result = await self._db.execute(
-            select(Talhao).where(Talhao.id == talhao_id, Talhao.user_id == user_id)
-        )
-        talhao = result.scalar_one_or_none()
+        talhao = await self._get(talhao_id, user_id)
         if not talhao:
             return False
         await self._db.delete(talhao)
         await self._db.commit()
         return True
 
+    async def _get(self, talhao_id: str, user_id: str) -> Talhao | None:
+        result = await self._db.execute(
+            select(Talhao).where(Talhao.id == talhao_id, Talhao.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
     @staticmethod
     def _to_dto(t: Talhao) -> TalhaoDTO:
         return TalhaoDTO(
             id=t.id,
             user_id=t.user_id,
+            fazenda_id=t.fazenda_id,
             nome=t.nome,
             apelido=t.apelido,
             hectares=float(t.hectares) if t.hectares is not None else None,
