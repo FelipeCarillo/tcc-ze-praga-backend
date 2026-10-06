@@ -446,6 +446,29 @@ def get_diagnosis_graph_factory(  # type: ignore[no-untyped-def]
     return _factory
 
 
+def get_chat_history_service(  # type: ignore[no-untyped-def]
+    session_repo=Depends(get_chat_session_repository),
+    message_repo=Depends(get_chat_message_repository),
+    upload_svc=Depends(get_upload_service),
+):
+    """ChatService so' de leitura do historico (lista e mensagens).
+
+    Listar conversas nao roda agente nem inferencia: sem isto, ``GET /sessions``
+    montava o ChatService inteiro e falhava onde os modelos ONNX nao estao
+    carregados (o InferenceService exige os modelos no modo real).
+    """
+    from app.domains.chat.service import ChatService
+
+    return ChatService(
+        session_repo=session_repo,
+        message_repo=message_repo,
+        inference_svc=None,  # type: ignore[arg-type]
+        action_plan_svc=None,  # type: ignore[arg-type]
+        diagnosis_svc=None,  # type: ignore[arg-type]
+        upload_svc=upload_svc,
+    )
+
+
 def get_chat_service(  # type: ignore[no-untyped-def]
     session_repo=Depends(get_chat_session_repository),
     message_repo=Depends(get_chat_message_repository),

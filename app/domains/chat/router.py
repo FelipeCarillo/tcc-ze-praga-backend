@@ -24,6 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.config import settings
 from app.core.dependencies import (
+    get_chat_history_service,
     get_chat_service,
     get_current_user,
     get_transcription_service,
@@ -260,7 +261,7 @@ async def list_interrupts(
 async def list_sessions(
     limit: int = 50,
     current_user: UserDTO = Depends(get_current_user),
-    chat_svc: ChatService = Depends(get_chat_service),
+    chat_svc: ChatService = Depends(get_chat_history_service),
 ) -> list[ChatSessionSummary]:
     """Conversas do usuario, mais recentes primeiro (sessoes vazias filtradas)."""
     return await chat_svc.list_sessions(current_user.id, limit=limit)
@@ -274,7 +275,7 @@ async def list_sessions(
 async def get_session_messages(
     session_id: str,
     current_user: UserDTO = Depends(get_current_user),
-    chat_svc: ChatService = Depends(get_chat_service),
+    chat_svc: ChatService = Depends(get_chat_history_service),
 ) -> list[ChatMessageResponse]:
     """Mensagens de uma conversa — permite reabrir o chat onde parou."""
     messages = await chat_svc.get_session_messages(current_user.id, session_id)
