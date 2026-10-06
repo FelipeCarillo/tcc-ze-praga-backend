@@ -129,3 +129,13 @@ async def test_register_talhao_fazenda_inventada_cai_na_padrao(tools):
     assert svc.create.await_count == 2
     assert svc.create.await_args_list[1].args[1].fazenda_id is None
     assert result.update["selected_talhao_id"] == "t-9"
+
+
+async def test_use_talhao_depois_de_cadastrar_mantem_criado(tools):
+    """Visto com o GPT real: register_talhao seguido de use_talhao no mesmo talhão."""
+    tal = MagicMock(find_by_id=AsyncMock(return_value=_talhao("t-9")))
+    faz = MagicMock(find_by_id=AsyncMock(return_value=_fazenda()))
+    state = {"current_user_id": "u-1", "talhao_selected": {"id": "t-9", "created": True}}
+    with patch(f"{MOD}.FazendaRepository", return_value=faz), patch(f"{MOD}.TalhaoRepository", return_value=tal):
+        result = await _call(tools["use_talhao"], {"talhao_id": "t-9"}, state)
+    assert result.update["talhao_selected"]["created"] is True

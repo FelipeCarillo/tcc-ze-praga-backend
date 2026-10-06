@@ -125,7 +125,11 @@ def build_talhao_tools(
                 )
             if talhao is None:
                 return _reply(tool_call_id, {"error": "Talhão não encontrado."})
-            selected = _selected(talhao, fazenda.nome if fazenda else None, created=False)
+            # O modelo às vezes chama use_talhao logo depois de register_talhao
+            # no mesmo talhão: não pode apagar o "criado" (o cartão da UI).
+            prev = state.get("talhao_selected") or {}
+            created = bool(prev.get("id") == talhao.id and prev.get("created"))
+            selected = _selected(talhao, fazenda.nome if fazenda else None, created=created)
             return _reply(
                 tool_call_id,
                 {"ok": True, "talhao": selected},
