@@ -100,3 +100,85 @@ async def test_inspect_image_invalid_json_fallbacks_to_plant() -> None:
             {"image_id": None, "state": {"uploaded_files": [_file()]}}
         )
     assert json.loads(result)["is_analyzable_plant"] is True
+
+
+# ── TCC-103: gate pelo Decisions API, com o LLM de visão como reserva ───────
+
+
+def _decisions(prob: float, subject: str):
+    return {
+        "is_analyzable_plant": {"type": "predicate", "name": "is_analyzable_plant", "probability": prob},
+        "subject": {"type": "choice", "name": "subject", "choice": subject, "confidence": 0.9},
+    }
+
+
+async def test_inspect_image_usa_decisions_sem_chamar_llm(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "vision_gate_decisions", True)
+    decide = AsyncMock(return_value=_decisions(0.97, "folha"))
+    patcher, fake_llm = _patch_llm("{}")
+    with patcher, patch("app.domains.chat.tools.inspect_image.decide", decide):
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    data = json.loads(result)
+    assert data == {
+        "is_analyzable_plant": True,
+        "subject": "folha",
+        "reason": "Classificada como folha ou folíolo em close.",
+    }
+    fake_llm.ainvoke.assert_not_called()
+    sent_input = decide.await_args.args[0]
+    assert sent_input[0]["content"][1]["image_url"] == "data:image/jpeg;base64,ZmFrZQ=="
+
+
+async def test_inspect_image_decisions_baixa_probabilidade_e_false(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "vision_gate_decisions", True)
+    with patch(
+        "app.domains.chat.tools.inspect_image.decide",
+        AsyncMock(return_value=_decisions(0.02, "pessoa")),
+    ):
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    data = json.loads(result)
+    assert data["is_analyzable_plant"] is False and data["subject"] == "pessoa"
+
+
+async def test_inspect_image_decisions_falha_cai_no_llm(monkeypatch) -> None:
+    from app.config import settings
+    from app.core.decisions import DecisionsError
+
+    monkeypatch.setattr(settings, "vision_gate_decisions", True)
+    patcher, fake_llm = _patch_llm(
+        '{"is_analyzable_plant": true, "subject": "folha", "reason": "folha"}'
+    )
+    with patcher, patch(
+        "app.domains.chat.tools.inspect_image.decide",
+        AsyncMock(side_effect=DecisionsError("timeout")),
+    ):
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    assert json.loads(result)["is_analyzable_plant"] is True
+    fake_llm.ainvoke.assert_awaited_once()
+
+
+async def test_inspect_image_decisions_resposta_estranha_cai_no_llm(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "vision_gate_decisions", True)
+    patcher, fake_llm = _patch_llm(
+        '{"is_analyzable_plant": false, "subject": "produto", "reason": "x"}'
+    )
+    with patcher, patch(
+        "app.domains.chat.tools.inspect_image.decide", AsyncMock(return_value={})
+    ):
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    assert json.loads(result)["subject"] == "produto"
+    fake_llm.ainvoke.assert_awaited_once()

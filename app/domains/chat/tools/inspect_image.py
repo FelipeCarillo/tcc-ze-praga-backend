@@ -8,20 +8,29 @@ quando há imagem — se não for planta, recusa educadamente em vez de diagnost
 Retorna **JSON-string** (não ``Command``) de propósito: o resultado do gate
 precisa ficar visível ao LLM no histórico pra ele decidir o próximo passo.
 Espelha o padrão de visão de ``identify_crop.py``.
+
+TCC-103: a classificação sai primeiro do Decisions API (pergunta fechada, sem
+gerar texto — ~0,4 s contra ~1,7 s do LLM de visão no teste de 17/10/2026).
+Se ele falhar ou estiver desligado (``VISION_GATE_DECISIONS=false``), o LLM de
+visão responde como antes.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Annotated
+import logging
+from typing import Annotated, Any
 
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, tool
 from langgraph.prebuilt import InjectedState
 
 from app.config import settings
+from app.core.decisions import DecisionsError, decide, image_input
 from app.core.llm import get_chat_model, message_text
 from app.domains.chat.agent_state import ChatState, resolve_image
+
+logger = logging.getLogger(__name__)
 
 _PROMPT = (
     "Você é um triador de imagens agrícolas. Olhe a imagem e classifique. "
@@ -34,6 +43,50 @@ _PROMPT = (
     "pessoas, telas, documentos e paisagens distantes => false. "
     "Na dúvida entre 'folha' e 'planta', use true."
 )
+
+
+_SUBJECTS = {
+    "folha": "folha ou folíolo em close",
+    "planta": "planta inteira ou ramo, perto o bastante para ver as folhas",
+    "produto": "produto, embalagem, rótulo ou frasco",
+    "pessoa": "pessoa ou animal como assunto principal",
+    "paisagem": "lavoura ou paisagem vista de longe",
+    "documento": "documento, tela, print ou texto",
+    "outro": "qualquer outra coisa",
+}
+
+_GATE_QUESTIONS: list[dict[str, Any]] = [
+    {
+        "type": "predicate",
+        "name": "is_analyzable_plant",
+        "instructions": (
+            "É foto de uma planta/folha (idealmente de cultivo) em que dá pra avaliar "
+            "sintomas foliares? Produtos, embalagens, rótulos, pessoas, telas, documentos "
+            "e paisagens distantes não contam. Folha ou planta de perto contam."
+        ),
+    },
+    {
+        "type": "choice",
+        "name": "subject",
+        "instructions": "Qual é o assunto principal da imagem?",
+        "choices": [{"value": k, "description": v} for k, v in _SUBJECTS.items()],
+    },
+]
+
+
+async def _gate_via_decisions(data_url: str) -> dict[str, object]:
+    """Classifica a imagem pelo Decisions API (TCC-103)."""
+    answers = await decide(
+        image_input("Foto enviada por um produtor ao assistente de doenças da soja.", data_url),
+        _GATE_QUESTIONS,
+    )
+    probability = float(answers["is_analyzable_plant"]["probability"])
+    subject = str(answers["subject"]["choice"])
+    return {
+        "is_analyzable_plant": probability >= 0.5,
+        "subject": subject,
+        "reason": f"Classificada como {_SUBJECTS.get(subject, subject)}.",
+    }
 
 
 def _strip_json_fence(raw: str) -> str:
@@ -75,6 +128,15 @@ def build_inspect_image_tool() -> BaseTool:
                 ensure_ascii=False,
             )
 
+        data_url = f"data:{image.mime};base64,{image.b64}"
+        if settings.vision_gate_decisions:
+            try:
+                return json.dumps(await _gate_via_decisions(data_url), ensure_ascii=False)
+            except (DecisionsError, KeyError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "Decisions falhou no gate de imagem (%s) — usando o LLM de visão", exc
+                )
+
         vision_llm = get_chat_model(settings.vision_model)
         try:
             response = await vision_llm.ainvoke(
@@ -85,7 +147,7 @@ def build_inspect_image_tool() -> BaseTool:
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:{image.mime};base64,{image.b64}",
+                                    "url": data_url,
                                     "detail": settings.vision_image_detail,
                                 },
                             },

@@ -7,6 +7,9 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:
 os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-testing-only-32-chars!")
+# TCC-103: o gate de imagem não vai à rede nos testes — quem cobre o Decisions
+# liga a flag explicitamente e mocka o HTTP.
+os.environ.setdefault("VISION_GATE_DECISIONS", "false")
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
