@@ -18,7 +18,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Override sqlalchemy.url from our settings so we don't store credentials in alembic.ini
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# TCC-104: migrations em session mode — o transaction mode não aceita prepared statements.
+config.set_main_option("sqlalchemy.url", settings.session_database_url)
 
 target_metadata = Base.metadata
 

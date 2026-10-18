@@ -24,6 +24,16 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
+    # TCC-104: com o pooler do Supabase em transaction mode (porta 6543) no
+    # ``DATABASE_URL`` — que aguenta muitos clientes, mas não prepared
+    # statements —, o checkpointer, o Store do LangGraph (psycopg, com
+    # prepared statements) e o Alembic usam esta URL em session mode (5432).
+    # Vazia: tudo usa ``DATABASE_URL``, como antes.
+    database_session_url: str | None = None
+    # Pool do SQLAlchemy por instância. Em session mode o Supabase limita a 15
+    # clientes no total; em transaction mode as conexões são compartilhadas.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
 
     # Supabase (Storage only)
     supabase_url: str
@@ -193,6 +203,11 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"
+
+    @property
+    def session_database_url(self) -> str:
+        """URL para conexões longas/com prepared statements (TCC-104)."""
+        return self.database_session_url or self.database_url
 
 
 settings = Settings()  # type: ignore[call-arg]

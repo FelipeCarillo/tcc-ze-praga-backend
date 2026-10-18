@@ -10,6 +10,8 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-testing-only-32-cha
 # TCC-103: o gate de imagem não vai à rede nos testes — quem cobre o Decisions
 # liga a flag explicitamente e mocka o HTTP.
 os.environ.setdefault("VISION_GATE_DECISIONS", "false")
+# TCC-104: os testes de URL do banco não herdam a URL de session do .env.
+os.environ.setdefault("DATABASE_SESSION_URL", "")
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock

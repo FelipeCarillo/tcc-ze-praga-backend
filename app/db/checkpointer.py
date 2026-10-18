@@ -45,7 +45,7 @@ def _make_conn_string() -> str:
     O ``AsyncPostgresSaver`` usa psycopg async internamente (precisa de
     ``postgresql://`` sem o ``+asyncpg``).
     """
-    url = settings.database_url
+    url = settings.session_database_url  # TCC-104: session mode (prepared statements)
     if url.startswith("postgresql+asyncpg://"):
         url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
     elif url.startswith("postgres+asyncpg://"):

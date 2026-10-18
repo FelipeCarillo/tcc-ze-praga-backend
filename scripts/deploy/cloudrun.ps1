@@ -174,9 +174,9 @@ try {
         --allow-unauthenticated `
         --memory $recursos.Memory `
         --cpu $recursos.Cpu `
-        --concurrency 4 `
+        --concurrency 10 `
         --min-instances 0 `
-        --max-instances 2 `
+        --max-instances 3 `
         --cpu-throttling `
         $recursos.Boost `
         --timeout $recursos.Timeout `
