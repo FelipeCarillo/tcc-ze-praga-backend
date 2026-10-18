@@ -307,7 +307,9 @@ class ChatService:
         plan_features = await self._resolve_plan_features(user_id)
         graph = await self._get_graph(plan_features=plan_features)
         config = {"configurable": {"thread_id": session.id}}
-        result = await graph.ainvoke(
+        turn_input = await self._turn_input(
+            graph,
+            config,
             {
                 "messages": seed_messages,
                 "current_user_id": user_id,
@@ -320,18 +322,27 @@ class ChatService:
                 "diagnoses_in_turn": [],
                 "recent_relevant_diagnoses": recent_relevant,
             },
-            config=config,
+            resumable=session_id is not None,
+            message_text=message_text,
+            has_image=bool(uploaded_files),
         )
+        result = await graph.ainvoke(turn_input, config=config)
 
         # Detecta interrupt — quando o grafo pausa via ask_user, o "result"
         # contem o payload do interrupt em vez do estado final.
         interrupt_info = self._extract_interrupt_from_result(result)
         if interrupt_info is not None:
+            # TCC-102: o laudo pode nascer antes da pergunta — vai junto dela.
+            # ``diagnoses_in_turn`` zera a cada turno, então tudo ali é novo.
+            diagnosis = await self._diagnosis_from_state(result, user_id)
+            await self._persist_question(session.id, interrupt_info, diagnosis)
             return ChatResponse(
                 role="assistant",
                 content="",
+                diagnosis=diagnosis,
                 session_id=session.id,
                 interrupt=interrupt_info,
+                talhao=self._talhao_from(result),
             )
 
         diagnosis = await self._diagnosis_from_state(result, user_id)
@@ -408,10 +419,19 @@ class ChatService:
             "recent_relevant_diagnoses": recent_relevant,
         }
 
+        turn_input = await self._turn_input(
+            graph,
+            config,
+            initial_state,
+            resumable=session_id is not None,
+            message_text=message_text,
+            has_image=bool(uploaded_files),
+        )
+
         collected_chunks: list[str] = []
         try:
             async for event in graph.astream_events(
-                initial_state, version="v2", config=config
+                turn_input, version="v2", config=config
             ):
                 kind = event.get("event")
                 if kind == "on_chat_model_stream":
@@ -421,8 +441,7 @@ class ChatService:
                     # vazariam pro balão (ex.: o JSON do inspect_image).
                     if event.get("metadata", {}).get("langgraph_node") != "llm":
                         continue
-                    chunk = event["data"].get("chunk")
-                    token = getattr(chunk, "content", None) or ""
+                    token = self._chunk_text(event["data"].get("chunk"))
                     if token:
                         collected_chunks.append(token)
                         yield {"event": "token", "data": token}
@@ -438,6 +457,12 @@ class ChatService:
             # vazia — o cliente deve renderizar dialog + chamar /chat/resume.
             interrupt_info = await self._extract_pending_interrupt(graph, config)
             if interrupt_info is not None:
+                # TCC-102: laudo/talhão que nasceram antes da pergunta vão junto.
+                values = await self._turn_values(graph, config)
+                async for extra in self._question_extras(
+                    session.id, interrupt_info, values, {}, user_id
+                ):
+                    yield extra
                 yield {
                     "event": "interrupt",
                     "data": interrupt_info.model_dump(),
@@ -521,11 +546,23 @@ class ChatService:
 
         interrupt_info = self._extract_interrupt_from_result(result)
         if interrupt_info is not None:
+            # TCC-102: sem isto, o laudo gerado entre duas perguntas sumia — a
+            # resposta final só leva o que é novo em relação à última pergunta.
+            diagnosis = None
+            if self._new_in_resume(before, result, "diagnoses_in_turn"):
+                diagnosis = await self._diagnosis_from_state(result, user_id)
+            await self._persist_question(thread_id, interrupt_info, diagnosis)
             return ChatResponse(
                 role="assistant",
                 content="",
+                diagnosis=diagnosis,
                 session_id=thread_id,
                 interrupt=interrupt_info,
+                talhao=(
+                    self._talhao_from(result)
+                    if self._new_in_resume(before, result, "talhao_selected")
+                    else None
+                ),
             )
 
         # TCC-098: quando a pergunta (ex. o talhao) veio ANTES da analise, o
@@ -587,8 +624,7 @@ class ChatService:
                     # vazariam pro balão (ex.: o JSON do inspect_image).
                     if event.get("metadata", {}).get("langgraph_node") != "llm":
                         continue
-                    chunk = event["data"].get("chunk")
-                    token = getattr(chunk, "content", None) or ""
+                    token = self._chunk_text(event["data"].get("chunk"))
                     if token:
                         collected_chunks.append(token)
                         yield {"event": "token", "data": token}
@@ -601,6 +637,11 @@ class ChatService:
 
             interrupt_info = await self._extract_pending_interrupt(graph, config)
             if interrupt_info is not None:
+                values = await self._turn_values(graph, config)
+                async for extra in self._question_extras(
+                    thread_id, interrupt_info, values, before, user_id
+                ):
+                    yield extra
                 yield {"event": "interrupt", "data": interrupt_info.model_dump()}
                 yield {"event": "done", "data": thread_id}
                 return
@@ -705,6 +746,80 @@ class ChatService:
         return pending
 
     # ── Interrupt helpers ─────────────────────────────────────────────────────
+
+    async def _turn_input(
+        self,
+        graph: Any,
+        config: dict[str, Any],
+        state: dict[str, Any],
+        *,
+        resumable: bool,
+        message_text: str,
+        has_image: bool,
+    ) -> Any:
+        """Entrada do grafo para um turno novo (TCC-102).
+
+        Se a sessão ficou parada numa pergunta do Zé (``ask_user``) e o usuário
+        mandou outra mensagem em vez de responder, o turno novo deixava a tool
+        call da pergunta sem resposta — e a OpenAI recusa o histórico com
+        ``400 No tool output found``, travando a conversa. Aqui a mensagem vira
+        a resposta da pergunta e o turno pausado continua: a foto e os laudos
+        dele ficam. Só entra pelo ``update`` o que a mensagem nova trouxe (foto
+        nova, talhão escolhido na tela).
+        """
+        if not resumable:
+            return state
+        if await self._extract_pending_interrupt(graph, config) is None:
+            return state
+        answer = message_text
+        update: dict[str, Any] = {}
+        if has_image:
+            answer = f"{message_text}\n[O usuário enviou uma foto nova junto com esta mensagem.]"
+            update["uploaded_files"] = state["uploaded_files"]
+        if state.get("selected_talhao_id"):
+            update["selected_talhao_id"] = state["selected_talhao_id"]
+        logger.info("Mensagem nova com pergunta pendente — vira a resposta da pergunta")
+        return Command(resume=answer, update=update)
+
+    async def _persist_question(
+        self,
+        session_id: str,
+        interrupt_info: InterruptInfo,
+        diagnosis: DiagnosisResponse | None,
+    ) -> None:
+        """Grava a pergunta do Zé quando um laudo veio junto (TCC-102).
+
+        Sem laudo a pergunta não é gravada (o histórico segue igual); com laudo,
+        gravar é o que mantém o cartão do diagnóstico ao reabrir a conversa.
+        """
+        if diagnosis is None:
+            return
+        await self._message_repo.create(
+            session_id=session_id,
+            role="assistant",
+            content=interrupt_info.question,
+            diagnosis_id=diagnosis.id,
+        )
+
+    async def _question_extras(
+        self,
+        session_id: str,
+        interrupt_info: InterruptInfo,
+        values: dict[str, Any],
+        before: dict[str, Any],
+        user_id: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Eventos SSE de laudo/talhão que saem junto da pergunta (TCC-102)."""
+        if self._new_in_resume(before, values, "talhao_selected"):
+            talhao = self._talhao_from(values)
+            if talhao is not None:
+                yield {"event": "talhao", "data": talhao.model_dump_json()}
+        diagnosis = None
+        if self._new_in_resume(before, values, "diagnoses_in_turn"):
+            diagnosis = await self._diagnosis_from_state(values, user_id)
+            if diagnosis is not None:
+                yield {"event": "diagnosis", "data": diagnosis.model_dump_json()}
+        await self._persist_question(session_id, interrupt_info, diagnosis)
 
     @staticmethod
     def _extract_interrupt_from_result(result: Any) -> InterruptInfo | None:
@@ -899,6 +1014,22 @@ class ChatService:
 
                 return message_text(msg)
         return ""
+
+    @staticmethod
+    def _chunk_text(chunk: Any) -> str:
+        """Texto de um chunk de streaming, qualquer que seja o provider (TCC-100).
+
+        Na Responses API (gpt-6) e na Anthropic o ``content`` do chunk é uma
+        lista de blocos — raciocínio criptografado, argumentos de tool call e
+        texto. Repassar a lista crua mandava ``[object Object]`` para o balão e
+        quebrava o ``"".join`` do turno, que então não era salvo. Aqui só passa
+        o texto.
+        """
+        if chunk is None:
+            return ""
+        from app.core.llm import message_text
+
+        return message_text(chunk)
 
     @staticmethod
     def _tool_output_to_text(output: Any) -> str:
