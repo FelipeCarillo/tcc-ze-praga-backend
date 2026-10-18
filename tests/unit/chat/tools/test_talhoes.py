@@ -56,6 +56,25 @@ async def test_lista_fazendas_com_talhoes_e_escolhido(tools):
     assert [f["nome"] for f in body["fazendas"]] == ["Boa Vista", "São José"]
     assert body["fazendas"][0]["talhoes"] == [{"id": "t-1", "nome": "Talhão 3", "apelido": "Sede"}]
     faz.find_all_by_user.assert_awaited_once_with("u-1")
+    assert body["ask_user_about_talhao"] is False  # já escolhido
+
+
+@pytest.mark.parametrize(
+    ("talhoes", "selected", "esperado"),
+    [
+        ([], None, False),  # sem talhão cadastrado: não pergunta (TCC-101)
+        ([_talhao()], None, True),  # tem talhão e nenhum escolhido: pergunta
+        ([_talhao()], "t-1", False),  # já escolhido na tela
+    ],
+)
+async def test_lista_decide_se_pergunta_o_talhao(tools, talhoes, selected, esperado):
+    faz = MagicMock(find_all_by_user=AsyncMock(return_value=[_fazenda()] if talhoes else []))
+    tal = MagicMock(find_all_by_user=AsyncMock(return_value=talhoes))
+    with patch(f"{MOD}.FazendaRepository", return_value=faz), patch(f"{MOD}.TalhaoRepository", return_value=tal):
+        out = await tools["list_my_talhoes"].ainvoke(
+            {"state": {"current_user_id": "u-1", "selected_talhao_id": selected}}
+        )
+    assert json.loads(out)["ask_user_about_talhao"] is esperado
 
 
 async def test_use_talhao_escolhe_e_avisa_a_ui(tools):

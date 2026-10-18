@@ -78,16 +78,22 @@ def build_talhao_tools(
         ) -> str:
             """Lista as fazendas do usuário com os talhões de cada uma.
 
-            Chame antes de analisar uma foto: se ``selected_talhao_id`` vier
-            preenchido, o usuário já escolheu o talhão — não pergunte.
+            Chame antes de analisar uma foto e siga ``ask_user_about_talhao``:
+            ``false`` quando o talhão já foi escolhido ou o usuário não tem
+            nenhum — aí não pergunte.
             """
             user_id = state.get("current_user_id") or ""
             async with db_session_factory() as session:
                 fazendas = await FazendaRepository(session).find_all_by_user(user_id)
                 talhoes = await TalhaoRepository(session).find_all_by_user(user_id)
+            selected = state.get("selected_talhao_id")
             return json.dumps(
                 {
-                    "selected_talhao_id": state.get("selected_talhao_id"),
+                    "selected_talhao_id": selected,
+                    # TCC-101: decisão determinística de perguntar ou não. Sem
+                    # talhão cadastrado, a pergunta só oferecia "Novo talhão /
+                    # Pular" e dobrava a espera até o laudo (~15 s medidos).
+                    "ask_user_about_talhao": bool(talhoes) and not selected,
                     "fazendas": [
                         {
                             "id": f.id,
