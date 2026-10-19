@@ -65,6 +65,23 @@ class DiagnosisService:
             raise ForbiddenError()
         return self._to_response(diagnosis, self._resolve_for([diagnosis]))
 
+    async def get_many(
+        self, diagnosis_ids: list[str], user_id: str
+    ) -> list[DiagnosisResponse]:
+        """Laudos na ordem dos ids, com as imagens assinadas num unico lote.
+
+        Usado pelo ``/diagnoses/analyze`` (TCC-105): antes o router lia o
+        repositorio direto e devolvia a storage key crua em ``image_url``.
+        """
+        items: list[DiagnosisDTO] = []
+        for diagnosis_id in diagnosis_ids:
+            diagnosis = await self._repo.find_by_id(diagnosis_id, user_id)
+            if not diagnosis:
+                raise NotFoundError("Diagnosis", diagnosis_id)
+            items.append(diagnosis)
+        urls = self._resolve_for(items)
+        return [self._to_response(d, urls) for d in items]
+
     async def list_for_user(
         self, user_id: str, filters: DiagnosisFilters
     ) -> PaginatedResponse[DiagnosisResponse]:

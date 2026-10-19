@@ -83,6 +83,16 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Sem isto o navegador esconde os headers custom do /diagnoses/analyze do
+    # JS (TCC-064 rate limit, TCC-105 modelo efetivo e fotos que falharam).
+    expose_headers=[
+        "X-RateLimit-Limit",
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+        "X-Model-Used",
+        "X-Model-Downgraded",
+        "X-Images-Failed",
+    ],
 )
 
 # ── Exception handlers ────────────────────────────────────────────────────────

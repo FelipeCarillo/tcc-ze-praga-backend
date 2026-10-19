@@ -27,6 +27,7 @@ from app.domains.diagnosis_graph.nodes import (
     run_inference_node,
 )
 from app.domains.inference.schemas import InferenceResult
+from app.domains.subscriptions.features import FREE_FEATURES
 from app.shared.enums import ActionPlanLevelEnum, SeverityEnum
 from tests.conftest import NOW
 
@@ -197,6 +198,26 @@ async def test_compose_action_plan_node_picks_up_plans(mock_action_plan_svc):
     assert len(update["action_plans"]) == 2
     assert update["action_plans"][0]["disease_id"] == "ferrugem-asiatica"
     assert len(update["action_plans"][0]["levels"]) == 2
+
+
+async def test_compose_action_plan_filters_levels_by_plan(mock_action_plan_svc):
+    """TCC-105: o node respeita ``action_plan_levels`` do plano (Free=essencial)."""
+    levels_in_plan = {
+        str(lvl.level) for lvl in _action_plan_response().levels
+    }
+    assert len(levels_in_plan) > 1  # o fixture precisa ter algo a filtrar
+    state = {
+        "predictions": [{"disease_id": "ferrugem-asiatica"}],
+        "plan_features": FREE_FEATURES.model_dump(),
+    }
+
+    update = await compose_action_plan_node(
+        state, action_plan_svc=mock_action_plan_svc
+    )
+
+    assert [lvl["level"] for lvl in update["action_plans"][0]["levels"]] == [
+        "essencial"
+    ]
 
 
 async def test_compose_action_plan_handles_lookup_failure(mock_action_plan_svc):

@@ -174,9 +174,19 @@ async def compose_action_plan_node(
 ) -> dict[str, Any]:
     """Busca plano de acao por disease detectado.
 
-    Em Sprint A2 retorna todos os niveis. A filtragem por ``preferred_action_level``
-    (vinda do ChatState) entra em Sprint A3 quando PlanFeatures existir.
+    TCC-105: os niveis saem filtrados por ``plan_features.action_plan_levels``
+    (Free=essencial, Pro=+campo, Enterprise=+especialista), o mesmo gate da tool
+    ``get_action_plan`` e de ``GET /action-plans``. Antes o node devolvia todos
+    os niveis — inofensivo enquanto ninguem lia ``action_plans``, mas o
+    ``/diagnoses/analyze`` passou a devolve-lo. Sem ``plan_features`` no estado
+    (testes/legacy) nao filtra.
     """
+    plan_features: dict[str, Any] = state.get("plan_features") or {}
+    allowed_levels: set[str] | None = (
+        set(plan_features["action_plan_levels"])
+        if "action_plan_levels" in plan_features
+        else None
+    )
     plans: list[dict[str, Any]] = []
     for pred in state.get("predictions", []):
         disease_id = pred["disease_id"]
@@ -188,6 +198,7 @@ async def compose_action_plan_node(
                     "levels": [
                         {"level": str(lvl.level), "actions": list(lvl.actions)}
                         for lvl in plan.levels
+                        if allowed_levels is None or str(lvl.level) in allowed_levels
                     ],
                     "sources": [
                         {"name": s.name, "url": s.url} for s in plan.sources

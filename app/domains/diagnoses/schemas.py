@@ -3,7 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.shared.enums import SeverityEnum
+from app.domains.action_plans.schemas import ActionPlanLevelResponse
+from app.shared.enums import ActionPlanLevelEnum, SeverityEnum
 
 
 class Top3PredictionSchema(BaseModel):
@@ -69,6 +70,37 @@ class DiagnosisResponse(BaseModel):
     sources: list[DiagnosisSourceSchema] = Field(default_factory=list)
     talhao_id: str | None = None
     talhao_nome: str | None = None
+
+
+class DiagnosisActionPlanSourceSchema(BaseModel):
+    """Referencia tecnica do plano de acao (Embrapa, bula, etc.)."""
+
+    name: str
+    url: str | None = None
+
+
+class DiagnosisActionPlanSchema(BaseModel):
+    """Plano de acao anexado a um laudo recem-analisado (TCC-105).
+
+    ``levels`` ja vem filtrado pelo plano do usuario; ``allowed_levels`` diz
+    quais niveis o plano libera, para o cliente distinguir "nivel nao existe
+    para esta doenca" de "nivel existe mas o plano nao cobre".
+    """
+
+    levels: list[ActionPlanLevelResponse]
+    allowed_levels: list[ActionPlanLevelEnum]
+    sources: list[DiagnosisActionPlanSourceSchema] = Field(default_factory=list)
+
+
+class AnalyzedDiagnosisResponse(DiagnosisResponse):
+    """Item de ``POST /diagnoses/analyze``: o laudo + o plano de acao (TCC-105).
+
+    Subclasse em vez de campo novo em ``DiagnosisResponse`` porque o plano so'
+    e' calculado na analise — o historico nao o carrega. ``None`` quando a
+    doenca nao tem plano cadastrado.
+    """
+
+    action_plan: DiagnosisActionPlanSchema | None = None
 
 
 class SetDiagnosisTalhaoRequest(BaseModel):

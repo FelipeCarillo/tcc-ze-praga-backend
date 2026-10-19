@@ -19,7 +19,6 @@ from app.core.dependencies import (
     auth_method_dual,
     get_current_user,
     get_diagnosis_graph_factory,
-    get_diagnosis_repository,
     get_diagnosis_service,
     get_inference_service,
     get_plan_features_dual,
@@ -30,28 +29,30 @@ from app.core.dependencies import (
     require_quota,
     require_quota_dual,
 )
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import InferenceUnavailableError
+from app.domains.action_plans.schemas import ActionPlanLevelResponse
 from app.domains.auth.dto import UserDTO
 from app.domains.chat.schemas import SemanticDiagnosisHit
 from app.domains.diagnoses.schemas import (
+    AnalyzedDiagnosisResponse,
     CreateDiagnosisRequest,
+    DiagnosisActionPlanSchema,
+    DiagnosisActionPlanSourceSchema,
     DiagnosisFilters,
     DiagnosisResponse,
     SetDiagnosisTalhaoRequest,
     TalhaoGroupResponse,
-    Top3PredictionSchema,
 )
 from app.domains.diagnoses.service import DiagnosisService
 from app.domains.inference.service import InferenceService, resolve_allowed_model
 from app.domains.subscriptions.features import PlanFeatures
 from app.domains.usage.service import UsageService
-from app.shared.enums import FeatureTypeEnum, SeverityEnum
+from app.shared.enums import ActionPlanLevelEnum, FeatureTypeEnum, SeverityEnum
 from app.shared.pagination import PaginatedResponse
 
 if TYPE_CHECKING:
     from langgraph.store.postgres.aio import AsyncPostgresStore
 
-    from app.domains.diagnoses.repository import DiagnosisRepository
     from app.domains.subscriptions.repository import SubscriptionRepository
     from app.domains.usage.repository import UsageRepository
 
@@ -87,7 +88,34 @@ async def _read_image_batch(
     return batch, ids
 
 
-@router.post("/analyze", response_model=list[DiagnosisResponse], status_code=200)
+def _to_action_plan(
+    raw: dict[str, Any] | None, allowed_levels: list[ActionPlanLevelEnum]
+) -> DiagnosisActionPlanSchema | None:
+    """Converte o plano montado pelo ``compose_action_plan_node`` (TCC-105).
+
+    ``None`` quando a doenca nao tem plano cadastrado — o node devolve
+    ``levels`` e ``sources`` vazios nesse caso (ex.: folha saudavel).
+    """
+    if not raw or not (raw.get("levels") or raw.get("sources")):
+        return None
+    return DiagnosisActionPlanSchema(
+        levels=[
+            ActionPlanLevelResponse(
+                level=ActionPlanLevelEnum(lvl["level"]), actions=list(lvl["actions"])
+            )
+            for lvl in raw.get("levels", [])
+        ],
+        allowed_levels=allowed_levels,
+        sources=[
+            DiagnosisActionPlanSourceSchema(name=s["name"], url=s.get("url"))
+            for s in raw.get("sources", [])
+        ],
+    )
+
+
+@router.post(
+    "/analyze", response_model=list[AnalyzedDiagnosisResponse], status_code=200
+)
 async def analyze(
     response: Response,
     images: list[UploadFile] = File(...),
@@ -97,18 +125,24 @@ async def analyze(
     current_user: UserDTO = Depends(require_quota_dual),
     auth_method: str = Depends(auth_method_dual),
     diagnosis_graph_factory: Callable[[str], Any] = Depends(get_diagnosis_graph_factory),
-    diag_repo: "DiagnosisRepository" = Depends(get_diagnosis_repository),
+    diag_svc: DiagnosisService = Depends(get_diagnosis_service),
     usage_svc: UsageService = Depends(get_usage_service),
     usage_repo: "UsageRepository" = Depends(get_usage_repository),
     sub_repo: "SubscriptionRepository" = Depends(get_subscription_repository),
     plan_features: PlanFeatures = Depends(get_plan_features_dual),
-) -> list[DiagnosisResponse]:
+) -> list[AnalyzedDiagnosisResponse]:
     """Endpoint REST direto pra diagnostico (sem chat).
 
     Auth dual: aceita JWT (web) OU ``X-API-Key`` (Enterprise via REST). Quota
     eh contada por INFERENCE (daily) com JWT, ou API (monthly) com API key.
     Quando autenticado via API key, response carrega headers
     ``X-RateLimit-{Limit,Remaining,Reset}`` (TCC-064).
+
+    TCC-105: cada laudo vem com ``image_url`` assinada, ``sources`` e o
+    ``action_plan`` filtrado pelo plano. Headers
+    ``X-Model-Used``, ``X-Model-Downgraded`` e ``X-Images-Failed`` informam
+    rebaixamento de modelo e fotos que ficaram de fora. Lote sem nenhuma foto
+    classificada vira 503 e nao consome cota.
     """
     feature = (
         FeatureTypeEnum.API if auth_method == "api_key" else FeatureTypeEnum.INFERENCE
@@ -116,7 +150,7 @@ async def analyze(
 
     graph = diagnosis_graph_factory(crop_id)
     image_batch, image_ids = await _read_image_batch(images)
-    effective_model, _downgraded = resolve_allowed_model(
+    effective_model, downgraded = resolve_allowed_model(
         model, plan_features.diagnosis_models
     )
 
@@ -132,40 +166,35 @@ async def analyze(
         }
     )
 
-    persisted_ids = result.get("persisted_ids", [])
-    responses: list[DiagnosisResponse] = []
-    for diag_id in persisted_ids:
-        dto = await diag_repo.find_by_id(diag_id, current_user.id)
-        if not dto:
-            raise NotFoundError("Diagnosis", diag_id)
-        responses.append(
-            DiagnosisResponse(
-                id=dto.id,
-                disease_name=dto.disease_name,
-                disease_id=dto.disease_id,
-                scientific_name=dto.scientific_name,
-                confidence=dto.confidence,
-                severity=dto.severity,
-                description=dto.description,
-                model_used=dto.model_used,
-                image_url=dto.image_url,
-                image_name=dto.image_name,
-                created_at=dto.created_at,
-                talhao_id=dto.talhao_id,
-                talhao_nome=dto.talhao_nome,
-                top3=[
-                    Top3PredictionSchema(
-                        rank=t.rank,
-                        disease_name=t.disease_name,
-                        disease_id=t.disease_id,
-                        scientific_name=t.scientific_name,
-                        confidence=t.confidence,
-                        severity=t.severity,
-                    )
-                    for t in dto.top3
-                ],
-            )
+    persisted_ids: list[str] = result.get("persisted_ids", [])
+    failed: list[dict[str, Any]] = result.get("errors") or []
+
+    # TCC-105: nenhuma imagem classificada nao e' "200 com lista vazia" — e' o
+    # mesmo 503 de UX-001, e a cota nao e' consumida.
+    if not persisted_ids and failed:
+        raise InferenceUnavailableError(
+            "Nenhuma imagem pôde ser analisada. "
+            + " ".join(f"{f.get('image_name')}: {f.get('error')}" for f in failed)
         )
+
+    # TCC-105: via service, nao via repositorio — e' ali que a storage key vira
+    # URL assinada e que as fontes (``sources``) entram na resposta.
+    diagnoses = await diag_svc.get_many(persisted_ids, current_user.id)
+    # ``persist_node`` grava um laudo por predicao, na ordem; ``action_plans``
+    # segue o mesmo index.
+    action_plans: list[dict[str, Any]] = result.get("action_plans") or []
+    allowed_levels = [
+        ActionPlanLevelEnum(lvl) for lvl in plan_features.action_plan_levels
+    ]
+    responses = [
+        AnalyzedDiagnosisResponse(
+            **diagnosis.model_dump(),
+            action_plan=_to_action_plan(
+                action_plans[i] if i < len(action_plans) else None, allowed_levels
+            ),
+        )
+        for i, diagnosis in enumerate(diagnoses)
+    ]
 
     await usage_svc.record_usage(
         current_user.id,
@@ -175,9 +204,17 @@ async def analyze(
             "model": effective_model,
             "model_requested": model,
             "batch_size": len(images),
+            "images_failed": len(failed),
             "auth_method": auth_method,
         },
     )
+
+    # TCC-105: o cliente precisa saber quando o plano trocou o modelo pedido e
+    # quantas fotos ficaram de fora do lote — o corpo continua sendo a lista de
+    # laudos para nao quebrar integracoes existentes.
+    response.headers["X-Model-Used"] = effective_model
+    response.headers["X-Model-Downgraded"] = "true" if downgraded else "false"
+    response.headers["X-Images-Failed"] = str(len(failed))
 
     # TCC-064: rate limit headers — so' faz sentido pra API key (monthly quota).
     if auth_method == "api_key":
