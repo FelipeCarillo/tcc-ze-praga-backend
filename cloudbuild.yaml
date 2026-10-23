@@ -24,11 +24,12 @@ substitutions:
   _SERVICE: ze-praga-api
   _MODELS_BUCKET: gs://ze-praga-tcc-models
   _REPO: cloud-run-source-deploy
-  # Modelos que entram na imagem (nomes sem extensão). O perfil enxuto leva só
-  # o EfficientNet-B4 (67 MB em vez de 485 MB) — combine com
-  # INFERENCE_MODELS=efficientnet_b4 no serviço. Para os três:
-  #   --substitutions=_MODELS="soja_efficientnet_b4 soja_resnet50 soja_vit_b16"
-  _MODELS: soja_efficientnet_b4
+  # Modelos que entram na imagem (nomes sem extensão). Desde 23/10/2026 o
+  # serviço roda os três + ensemble (4 GiB / 2 vCPU, INFERENCE_MODELS com os
+  # três) — um push com só o EfficientNet derrubaria o ensemble em silêncio.
+  # Perfil enxuto (67 MB em vez de 485 MB, INFERENCE_MODELS=efficientnet_b4):
+  #   --substitutions=_MODELS="soja_efficientnet_b4"
+  _MODELS: soja_efficientnet_b4 soja_resnet50 soja_vit_b16
 
 steps:
   # 1) Modelos reais por cima dos ponteiros do LFS — só os de _MODELS. Os

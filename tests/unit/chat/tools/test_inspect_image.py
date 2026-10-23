@@ -105,9 +105,10 @@ async def test_inspect_image_invalid_json_fallbacks_to_plant() -> None:
 # ── TCC-103: gate pelo Decisions API, com o LLM de visão como reserva ───────
 
 
-def _decisions(prob: float, subject: str):
+def _decisions(prob: float, subject: str, reproduction: float = 0.03):
     return {
         "is_analyzable_plant": {"type": "predicate", "name": "is_analyzable_plant", "probability": prob},
+        "is_reproduction": {"type": "predicate", "name": "is_reproduction", "probability": reproduction},
         "subject": {"type": "choice", "name": "subject", "choice": subject, "confidence": 0.9},
     }
 
@@ -125,6 +126,7 @@ async def test_inspect_image_usa_decisions_sem_chamar_llm(monkeypatch) -> None:
     data = json.loads(result)
     assert data == {
         "is_analyzable_plant": True,
+        "is_reproduction": False,
         "subject": "folha",
         "reason": "Classificada como folha ou folíolo em close.",
     }
@@ -182,3 +184,73 @@ async def test_inspect_image_decisions_resposta_estranha_cai_no_llm(monkeypatch)
         )
     assert json.loads(result)["subject"] == "produto"
     fake_llm.ainvoke.assert_awaited_once()
+
+
+# ── TCC-106: folha em tela/documento é analisável, com recomendação ──────────
+
+
+async def test_inspect_image_decisions_folha_em_tela_analisa_com_nota(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "vision_gate_decisions", True)
+    with patch(
+        "app.domains.chat.tools.inspect_image.decide",
+        AsyncMock(return_value=_decisions(0.91, "documento", reproduction=0.95)),
+    ):
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    data = json.loads(result)
+    assert data["is_analyzable_plant"] is True
+    assert data["is_reproduction"] is True
+    assert "campo" in data["note"]
+
+
+async def test_inspect_image_decisions_documento_sem_folha_recusa_sem_nota(monkeypatch) -> None:
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "vision_gate_decisions", True)
+    with patch(
+        "app.domains.chat.tools.inspect_image.decide",
+        AsyncMock(return_value=_decisions(0.04, "documento", reproduction=0.97)),
+    ):
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    data = json.loads(result)
+    assert data["is_analyzable_plant"] is False
+    assert "note" not in data
+
+
+async def test_inspect_image_llm_folha_em_tela_analisa_com_nota() -> None:
+    patcher, _ = _patch_llm(
+        '{"is_analyzable_plant": true, "is_reproduction": true, '
+        '"subject": "documento", "reason": "folha num monitor"}'
+    )
+    with patcher:
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    data = json.loads(result)
+    assert data["is_analyzable_plant"] is True and data["is_reproduction"] is True
+    assert "note" in data
+
+
+async def test_inspect_image_foto_de_campo_sem_nota() -> None:
+    patcher, _ = _patch_llm(
+        '{"is_analyzable_plant": true, "subject": "folha", "reason": "folha de soja"}'
+    )
+    with patcher:
+        result = await build_inspect_image_tool().ainvoke(
+            {"image_id": None, "state": {"uploaded_files": [_file()]}}
+        )
+    data = json.loads(result)
+    assert data["is_reproduction"] is False
+    assert "note" not in data
+
+
+def test_system_prompt_manda_diagnosticar_reproducao() -> None:
+    from app.domains.chat.agent import SYSTEM_PROMPT
+
+    assert "is_reproduction=true" in SYSTEM_PROMPT
+    assert "direto da folha no campo" in SYSTEM_PROMPT
