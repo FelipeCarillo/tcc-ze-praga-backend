@@ -178,11 +178,8 @@ class Settings(BaseSettings):
     # se a foto é de uma folha — o diagnóstico em si é do ONNX, não do LLM.
     vision_image_detail: str = "low"
 
-    # TCC-103: o gate ``inspect_image`` consulta primeiro o Decisions API da
-    # OpenAI (pergunta fechada, sem gerar texto) — ~0,4 s contra ~1,7 s do
-    # LLM de visão, com o mesmo acerto no teste de 17/10/2026. Qualquer falha
-    # (beta, timeout, outro provider) cai no LLM de visão de sempre.
-    vision_gate_decisions: bool = True
+    # TCC-103: cliente do Decisions API da OpenAI (``app/core/decisions.py``).
+    # TCC-107: o gate ``inspect_image`` não usa mais — só o LLM de visão.
     decisions_model: str = "gpt-6-luna"
     decisions_timeout_seconds: float = 5.0
 
